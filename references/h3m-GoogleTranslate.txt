@@ -1,0 +1,1558 @@
+h3m:
+
+(all absolute addresses on a S-size dog map with a three-character name, unless otherwise stated)
+
+List of bytes
+Left - byte number. Everything done on a size map S o
+three-character name (they move). WoGowy map format, unless selected.
+
+0000 to 0003 - map version, depends on the format - WoG (33), AB (15), RoE (0e), SoD (1c). This is also checked by the H3 map editor
+0004 - on some maps it indicates if there are players on the map; in the case of WoG maps with ERMs, it does not work
+0005 to 0008 - length / width of the map side
+0009 - whether the map has dungeons (01) or not (00) - note - if the map has dungeons, then the bytes describing the terrain on the surface are followed by the second as many with the description of the underground
+000a to 000d - length of the map name (the editor allows up to 30 characters)
+000e - the first character of the map name
+-attention - from now on we assume a map name with a length of 3 characters! -
+0011 to 0014 - length of the map description
+-attention - from now on we assume that the map has a description with a length of 0 characters! -
+0015 - easy map difficulty (00); normal (01); hard (02); expert (03); impossible (04)
+0016 - hero level limitation
+0017 - the beginning of the description of the players; if a given player cannot be played, his description starts with two zero bytes; if a player cannot be played or has no heroes, its description takes 15 bytes; if he has one hero, then 25 bytes, if more, then 5 bytes for each additional one + any names (described in more detail below) (heroes' houses are not included in the player's hero count)
+-attention - when a given player does not appear on the map, some bytes describing him may take random values
+008E to the last byte of player descriptions (if missing)
+008f to the win condition (FF - standard, 00 - known artifact, 01 - collect a squad, 02 - get a resource, 03 - expand the city, 04 - build a grail, 05 - defeat a specific hero, 06 - conquer a city, 07 - defeat a specific monster, 08 - flag the habitats, 09 - flag the mines, 0a - transport the artifact); if non-standard, additional bytes follow (see description below)
+0090 to the failure condition (FF - standard, 00 - loss of a specific city, 01 - loss of a specific hero, 02 - time limit); if non-standard, additional bytes follow (see description below)
+0091 to the number of teams; if non-zero, then 8 additional bytes describing the team numbers of the next players (team numbers start with 0) / we assume in the numbering that there are no teams /
+0092 to 00a5 - information about which heroes are available for the game (20 bytes, for RoE 16)
+00a6 to 00a9 - four nulls (reserved for potential new heroes? Appearing from AB)
+00aa - number of disposed heroes, then for each:
+* 1 - Hero ID
+* 1 - hero portrait number (FF is standard)
+* 4 name length (0 - standard
+* [] name
+* 1 - which players can buy this hero (bit field, 87654321)
+*
+
+00aa - no matter what, GrayFace says they are Disposed Heroes, but he didn't want to figure it out. Most regular maps have null here and no extra bytes, but some do show up. Pathology put aside for later. They appear from SoD.
+00ab to 00c9 - 31 nulls
+00ca to 00db - information about which artifacts are available (18 bytes, up to AB including 17)
+00dc to 00e4 - information about which spells are available (from SoD inclusive)
+00e5 to 00e8 - information about which heroes' skills are available (from SoD inclusive)
+00e9 to 00ec - number of rumors (maximum 30) (if different from zero, to additional bytes (description below) (bytes 00ea to 00ec always equal to zero - are they not used for something else (?) (Rather not))
+further 156 bytes corresponding to information about predefined heroes (all heroes are 156)
+if for which character the byte is true, additional flags appear, is there any specific non-standard information:
+* experience
+* secondary skills
+* artifacts
+* biography
+* gender
+* witchcraft
+* first-class skills
+
+If any of these flags is true, then the appropriate information appears behind it, the form is identical to that of the hero's object (instance)
+
+Then follow:
+- terrain description (see further) - 7 bytes per field
+- defs declarations (see further) - 4 bytes for their number, and then for each (4 + length_name + 42) bytes
+- descriptions of all objects on the map (see further) - 4 bytes for their number, then depending on the objects
+- time events (see further)
+- variables depending on who knows what, are probably just for the sake of deception
+
+
+0189 - start of terrain fields (as there are no rumors)
+From now on, descriptions of the next terrain fields follow.
+After the last field, there are bytes that define the number of defs.
+eight bytes after it begins with the name of the first def. Do these eight
+bytes is the limit on the number of defs per map ??? see the names of defs precedes (04 00 00 00)
+deficit of items used on the map
+def consists of name length + name + 42 bytes of description
+
+the list of objects is followed by the list of defects
+First is the number of objects (4 bytes) (including monsters)
+objects follow
+for each object used object 12 bytes
+1 byte - X factor
+2 byte - coefficient y
+3 byte - level - (00) overground, (01) underground
+4 byte - object identifier (probably the number in the defa that defines it (according to the order of the defs from previous declarations)
+5 - 12 ??
+
+(FF) and 3 bytes empty - why here ??
+
+monsters and objects follow
+Each monster is defined by 24 bytes (or 36 ?????)
+objects are usually 10 bytes (such as artifacts and resources)
+1 byte - X factor
+2 byte - coefficient y
+3 byte - level - (00) overground, (01) underground
+4 byte - object identifier (probably the number in the defa that defines it)
+
+-------------------------------------------------- -------------------------------------------------- -------
+Notes about the area:
+The area code is the descriptions of the following fields, in stripes from left to right, a
+then top down (surface first, then dungeon). Each field consists of 7 bytes.
+1 byte - terrain type - dirt (00), desert (01), grassland (02), snow
+(03), swamp (04), rough (05), subterranean (06), lava (07) water (08)
+2 byte - the appearance of the terrain - the image number in the definition
+3 byte - river presence - water (01), icy (02), mud (03), lava
+(04); none - (00)
+4 byte - river direction / appearance - picture number in def
+(vertical (09), (0a); level (0b), (0c); turn (01); intersection (04);
+leg plumb _ | _ (05); branch level (07); none - (00) ;;; sometimes (00)
+also when there is a river (why?) - DP turn)
+
+5.6 byte - roads (check out later), probably analogous to rivers
+
+7 byte - whether the byte is a coast and whether (and, if necessary, how) the bitmap with the field should be mirrored
+
+coast adds 40 to this bit field
+
+change of the map field caused by this byte:
+we look at the 2 least significant bits (we take the number modulo 4)
+if we have 00 (like 00 or 40 for example) then we leave the graphic alone
+if we have 01 (as for example 01 or 41), then we mirror the image symmetrically with respect to the vertical axis:
+|
+|
+-----------------
+| | |
+| | |
+| | |
+| | |
+| | |
+| | |
+-----------------
+|
+| <-the axis we reflect against
+|
+if we have 02 (as for example with 02 or 42), then we mirror the image symmetrically about the horizontal axis
+if we have 03 (like for example 03 or 43), we turn it 180 degrees to either side
+the bitmap reflections with the river (the next two least significant bits) and the road (two more) are analogically encoded
+
+-------------------------------------------------- -------------------------------------------------- -------
+Notes on defy declarations
+{for starters, we actually have a def number in normal format}
+The beginning of each segment with def are 4 bytes specifying the length of the name, followed by the name (with the extension),
+followed by 42 bytes.
+
+Here is a table with values.
+
+Tabs separated columns.
+The slashes '/' separate hex values ​​from decimal values ​​(I give values ​​including and including).
+Decimal byte numbering.
+The lists and notes I refer to are at the end of the file.
+
+Byte Monsters Objects
+defa name length (4 bytes, normal)
+defa name
+1 - 6 blockmap (see below)
+7 - 12 visitmap (see below) - specifies the places where you can visit a given object (they are organized in the same way as a blobmap, with the only difference that the visited places are marked with a bit one, and the non-visiting places are marked with a bit zero)
+13 - 14 bit field (9 bits; 8 in the first byte, 1 in the second) defining the area on which the object can be placed in the editor
+15 - 16 bit field (9 bits; 8 in the first byte, 1 in the second) defining the terrain in the editor the object is in the menu
+17 - 20 object type object type (list B)
+21 - 24 subtype - list A subtype - list E | 0 // if there is no subtype then this is (00)
+25 list in the editor with a given object (0- land, 1- cities, 2-monsters, 3- heroes, 4-artifacts, 5- resources)
+26 (0/1) whether the object is "concave" (such as a pond with gems) - Objects that have this flag set will always be displayed POD to those that do not. ; additionally, I noticed that the shadows of objects with this flag are not displayed (maybe it's worth checking out)
+27 - 42 only zeros, they seem to be responsible for nothing, maybe the developers have reserved them for unrealized features?
+
+The first six bytes define the fields that are blocked by the building ('visitable' fields also count as blocking here).
+Each of these bytes specifies a band of 8 (maybe only 7?) Horizontal, adjacent fields. The top bytes define the top lanes. If the object occupies less than 6 squares vertically, the upper ones remain unused (= marked as free = (FF)), the blockamap is in the lower ones.
+
+To determine which fields in a given lane are blocked, write the value of the byte in a binary system, (if necessary) complete with insignificant zeros up to 8 characters, and reverse the order. The subsequent digits of the number obtained in this way will indicate which fields are blocked and which are not. 1 means an empty field, and 0 is taken.
+For example, if an object takes a shape ('X' is an occupied space, and '.' Is an empty space):
+XX.
+XXX
+.XX
+It will be byte encoded:
+1. (FF) -> bin 11111111 -> (we reverse) 11111111 -> ........
+2. (FF) -> bin 11111111 -> (we reverse) 11111111 -> ........
+3. (FF) -> bin 11111111 -> (we reverse) 11111111 -> ........
+4. (9F) -> bin 10011111 -> (we reverse) 11111001 -> ..... XX.
+5. (1F) -> bin 00011111 -> (reverse) 11111000 -> ..... XXX
+6. (3F) -> bin 00111111 -> (we reverse) 11111100 -> ...... XX
+-------------------------------------------------- -------------------------------------------------- -------
+Notes about the heroes:
+the hero takes 46 bytes by default (without changing the garrison, name, artifacts, etc.)
+0001 - position along the x coordinate
+0002 - position along the y coordinate
+0003 - level (??)
+0004 - always 02 (?)
+000d - number (?) ---------------------
+000e - always 0d (?) | These bytes specify |
+000f - always cb (?) | Which bahater |
+0010 - always 12 (?) --------------------- {used e.g. for missions}
+0011 - player's number (player 1 - 0, 2 - 1 etc.)
+0012 - hero type (e.g. Solmyr)
+0013 - whether the first name is standard (00) or non-standard (01); if 01; are extra bytes: length: maximum 12 (in decimal), three zero bytes and first name; {CAUTION! changing the name changes the header significantly (along with its length)}
+0014 - whether the experience is non-zero; if so, four additional bytes - [0003] * 100 ^ 3 + [0002] * 100 ^ 2 + [0002] * 100 + [0000] = experience
+0016 - Standard Skills (00) or Not (01)
+if not, then 4 bytes for their number and their descriptions
+0017 - garrison; 00 - standard, 01 - non-standard -> 28 additional bytes, 4 bytes per item, one or two first per monster type, the last two per amount - amount recording as in other cases of writing numbers
+0018 - formation: loose - 00, strict - 01
+0019 - whether the artifacts are standard (00) or non-standard (01); if not standard, this byte is followed by 40 additional bytes describing the artifacts
+{the last two bytes are the number of artifacts in the pannier; if nonzero, then two extra bytes for each artifact in the pannier}
+001a - patrol: FF - none, wpp. patrol radius
+001b - hero's biography: 00 - missing, 01 - available, [extra bytes!]: 4 bytes per length (format as in the experiment) + content
+001c - gender (?) - FF - standard, 00 - opposite
+001d - standard spells (00) or non-standard spells (9 additional bytes right after this byte)
+001e - 00 or 01; after 01, follow 4 additional bytes (the length of the hero's description grows to 50 characters) which means attack, defense, power and knowledge in turn; 00 means standard basic skills
+still nothing but zeros
+-------------------------------------------------- -------------------------------------------------- -------
+Notes about monsters
+As a rule, a monster is 24 bytes
+first four as each object (pos + def)
+then 8 zeros
+four bytes per type (probably a type, but it doesn't match anything else) {used e.g. for missions}
+two bytes for the number of units in the open sky, 00 if random
+one to define the character, 00 - the friendliest, 04 the most hostile
+one to determine if there is a treasure / description
+and if there is, an extra four bytes for the length of the message, some for the content of the message, 7 of 4 for the amount of resources and two for the artifact
+one to determine if the unit never escapes (01) or is normal (00)
+one to determine whether the number of units increases with time (00) or not (01) and bind in the dark
+two are always zero
+[PS: when is a monster 36 bytes ???]
+-------------------------------------------------- -------------------------------------------------- -------
+Towns:
+usually 48 bytes
+00 - 02 - position
+03 - def
+04 - 0b - zero
+0c -? ---------------------
+0d -? | these bytes specify |
+0e -? | which castle is it |
+0f -? --------------------- {used for missions (?)}
+10 - player (FF - none)
+11 - whether it has a non-standard name (then 01 instead of 00); if so, 4 bytes for length and name (additionally, it increases the length of the file)
+12 - standard (00) or non-standard garrison (01)
+if non-standard, then 28 additional bytes
+seven times two bytes for the id of the creature and two for the number in normal notation, the order of the creatures as always
+13 - loose (00) or strict (01) formation
+14 - whether the standard settings of buildings (00) or not (01); if not, then an extra 12 bytes (note! you can also add the city event to the list below; it is more complete than this and seems to be compatible)
+00 - 00; +1 if they have a city council, +2 if they have a town hall, +4 if they have a capitol, +8 if they have a fort, +16 if they have a citadel, +32 if they have a castle, +64 if they have a tavern, + 128 if it has a forge
+01 - +1 if they have a market, +2 if they have resource storage, +8 if they have level 1 of the mages guild, +16 if they have level 2 of the mages guild, +32 if they have level 3 of the mages guild, +64 if they have has the fourth guild level, +128 if it has a fifth guild level (higher not tested)
+02 - +1 if he has a shipyard, +2 if he has a giant (grail), +4 if he has a lighthouse, +8 if he has a sword brotherhood, +16 if he has a stable, +64 if he has a watchtower (gen1 ), +128 if it has a watchtower upg (gen1 +)
+03 - +2 if he has archers (gen2), +4 if he has crossbowmen (gen2 +), +16 if he has griffins (gen3), +32 if he has griffin hive (gen3 +), +64 if he has griffin bastion (gen3 upg), +128 if he has swordfish (gen4)
+04 - +1 if it has crusaders (gen4 +), +4 if it has monks (gen5), +8 if it has priests (gen5 +), +32 if it has cavalry (gen6), +64 if it has champions (gen6 + ), +128 if it has angels (gen7)
+05 - +1 if has Archangels (gen7 +)
+06 - +1 if the city council is unavailable, +2 if the town hall is unavailable, +4 if the capitol is unavailable, +8 if the fort is unavailable, +16 if the citadel is unavailable, +32 if the castle is unavailable , +64 if the tavern is unavailable
+07 // probably the same as in 01, except that it determines the unavailability of buildings
+08 // probably the same as in 02 (checked for the sword brotherhood), except that it determines the unavailability of buildings
+09 // probably the same as in 03, except that it determines the unavailability of buildings
+0a // probably the same as in 04, except that it makes the buildings unavailable
+0b - +1 if archanioys are not available (gen7 +)
+{looks symmetrical so maybe it's better to do something else}
+15 - has a fort (if 014 has a value of 00); if 014 is 01, this byte is treated as 0b of the building description
+16 - 1e - which spells must appear in the guild
+1f - 27 - which spells can occur in the guild
+28 - 2b - the number of events related to this castle in normal notation
+2c - FF
+2d - 2f - zero
+-------------------------------------------------- -------------------------------------------------- -------
+standard player description:
+bytes:
+00 - can the human player play as this player (01 - yes; 00 - no)
+01 - can the computer play this player (01 - yes; 00 - no)
+02 - computer behavior (00 - random, 01 - belligerent, 02 - builders, 03 - inventive)
+03 - are the allowed fractions defined by the maker map (but even if 00, the next bytes are correctly set)
+04 and 05 - allowed factions (01 - castle; 02 - forest; 04 - winter; 08 - fire; 16 - necro; 32 - dungeon; 64 - barbarian; 128 - citadel; 01 byte 0005 - elemental); this is done on bitfields
+06 - whether the faction is random (00) or not (01)
+07 - if the main town has been selected for the player (01 - yes; 00 - no) - if yes, additional 5 bytes:
+- 07 + 1 - whether to generate a hero in the main city (01 - yes; 00 - no)
+- 07 + 2 - apparently the type of city
+- 07 + 3 - 07 + 5 - coordinates (standard - x, y, level)
+08 - should I generate a random hero (to choose from at the start)? (check out)
+09 - GrayFace's specification states that this is the hero number (what 'main' one to generate?), Taking FF when the hero is absent or random
+[from what I can see it is the number of the main character]
+0a - portrait of the main character (FF if standard)
+0b - 0e - length of the main character's name in normal notation (+ hero's name, if any - shifts bytes)
+- note - if the player does not have heroes, the description ends here -
+0f - the number of player's heroes' houses
+10 - 13 - the number of heroes in the player
+now as many times as the player has heroes repeats:
+one byte for character type, four bytes for first name + first name if non-standard
+
+-------------------------------------------------- -------------------------------------------------- -------
+bytes in victory conditions:
+
+(for artifact 4:
+00 - is it possible to win in the normal way (01 - yes, 00 - no);
+01 - does the victory condition also apply to the computer (00 - no, 01 - yes);
+02 - id of the artifact to get;
+04 - 00)
+(for branch 8 gathering:
+00 - is it possible to win in the normal way (01 - yes, 00 - no);
+01 - does the victory condition also apply to the computer (00 - no, 01 - yes);
+02 and 03 - monster id (see list A);
+04 to 07 - quantity (maximum 99999?) - normal recording)
+(for resource resource 7:
+00 - is it possible to win in the normal way (01 - yes, 00 - no);
+01 - does the victory condition also apply to the computer (00 - no, 01 - yes);
+02 - resource id (wood - 00, mercury - 01, ore - 02, sulfur - 03, crystal - 04, gems - 05, gold - 06 (almost certainly))
+03 - 06 - resource quantity in normal notation)
+(for city 7 expansion:
+00 - is it possible to win in the normal way (01 - yes, 00 - no);
+01 - does the victory condition also apply to the computer (00 - no, 01 - yes); (cannot be turned off)
+three bytes for city location (same as hero location)
+05 - expected degree of development of the council building (00 - town, 01 - cities, 02 - capitol)
+06 - expected level of castle development (00 - fort, 01 - citadel, 02 - castle))
+(for city expansion 5:
+00 and 01 always equal 01 (it is not possible to set corresponding options in the editor)
+the next three bytes - city location (or three times FF, if any city))
+(for defeating a specific hero 5:
+00 and 01 always equal 00 (it is not possible to set corresponding options in the editor)
+then we have the location of the hero who needs to be defeated on the map (x, y, level; indexed from 0))
+(for the capture of a specific city of 5:
+00 - is it possible to win in the normal way (01 - yes, 00 - no);
+01 - does the victory condition also apply to the computer (00 - no, 01 - yes);
+another three for city location)
+(for defeating monster 5:
+00 - is it possible to win in the normal way (01 - yes, 00 - no);
+01 - does the victory condition also apply to the computer (00 - no, 01 - yes) (cannot be turned off)
+monster's position on the map (same as hero's position))
+(for mine / habitat 2 flagging:
+00 - is it possible to win in the normal way (01 - yes, 00 - no);
+01 - does the victory condition also apply to the computer (00 - no, 01 - yes); )
+(for transporting artifact 6:
+00 - is it possible to win in the normal way (01 - yes, 00 - no); (always 01)
+01 - does the victory condition also apply to the computer (00 - no, 01 - yes);
+02 - artifact id
+03 - 05 - position of the destination city (as always))
+
+
+-------------------------------------------------- -------------------------------------------------- -------
+
+bytes in failure condition
+(for castle loss 3:
+town position in normal notation)
+(for the loss of a specific hero 3:
+hero's position in normal notation)
+(for time limit 2:
+two bytes for the number of days in normal notation (second byte times 256 + first byte)
+
+
+-------------------------------------------------- -------------------------------------------------- -------
+rumors and additional bytes associated with them
+three zero bytes
+four bytes to record the length of the rumor name (maximum 30,000, normal)
+the wording of the rumor name
+four bytes to record the length of the rumor content (maximum 300, normal notation)
+the content of the rumor
+
+
+----------------------------------
+event bytes (59 + | texts |)
+4 bytes for the event name
+event name (additional bytes)
+4 bytes per message length
+message (additional bytes)
+4 bytes to increase the amount of wood (normal notation) or ff, ff, ff, ff - amount of wood to be picked up (the maximum amount of wood that can be given / picked up is 32767)
+4 bytes to increase the amount of mercury (normal notation) or ff, ff, ff, ff - the amount of mercury to be collected (the maximum amount of mercury that can be given / received is 32767)
+4 bytes to increase the amount of ore (normal notation) or ff, ff, ff, ff - the amount of ore to be collected (the maximum amount of ore that can be given / received is 32767)
+4 bytes for increasing the amount of sulfur (normal notation) or ff, ff, ff, ff - amount of sulfur to be collected (the maximum amount of sulfur that can be given / received is 32767)
+4 bytes to increase the amount of crystal (normal notation) or ff, ff, ff, ff - amount of crystal to receive (the maximum amount of crystal that can be given / received is 32767)
+4 bytes to increase the amount of gems (normal notation) or ff, ff, ff, ff - amount of gems to be picked up (the maximum amount of gems that can be given / taken is 32767)
+4 bytes to increase the amount of gold (normal notation) or ff, ff, ff, ff - amount of gold to receive (the maximum amount of gold that can be given / received is 32767)
+1 byte - to which players the event applies (bit field, +1 - first, +2 - second, +4 - third, +8 - fourth, +16 - fifth, +32 - sixth, +64 - seventh, +128 - eighth )
+1 byte - does the event refer to players - people (00 - no, 01 - yes)
+1 byte - does the event refer to computer players (00 - no, 01 - yes)
+2 bytes - delay of the first occurrence (in days, normal writing, max 671)
+1 byte - every how many days an event occurs (max 28.00 means a one-time event)
+18 zero bytes
+
+
+----------------------------
+object - event (74 bytes)
+three bytes per position (as always)
+byte to defa number
+8 zero bytes
+1 byte specifying whether there is a message or watchdogs (01) or not (00)
+if there is a message but no guards, then
+4 bytes per message length (max 30,000)
+message
+5 zero bytes (for what?)
+if there are guards but no news, then
+4 zero bytes
+byte 01
+list of monsters (as usual, I think)
+4 zero bytes
+if there are guards and a message, then
+4 bytes of message length (normal writing)
+message
+1 byte 01
+bytes for creatures
+4 zero bytes
+4 bytes for the amount of experience awarded when the event is triggered
+4 bytes for gained / lost magic points (max 999) (give - normal record, receive - four bytes ff - how many to receive, also normal)
+1 byte for morale modifier (add - how much to add; subtract - (ff - how much to subtract))
+1 byte for luck modifier (add - how much to add; subtract - (ff - how much to subtract))
+28 bytes for resources added / received (probably analogous to resources in events)
+1 byte to increase the amount of attack
+1 byte to increase the amount of defense
+1 byte to increase the amount of power
+1 byte to increase the amount of knowledge
+1 byte for the number of secondary skills given (max 8)
+the number of secondary skills received times the following bytes:
+one byte for the type of skill (I think I have already described the id somewhere)
+one for the advancement level (01 - first, 02 - second, 03 - third)
+1 byte for the number of artifacts received
+two bytes specifying id for each artifact (according to G-list)
+1 byte for the amount of spells received
+one byte for each spell specifying its id (use the list in the section with information about unavailable spells)
+1 byte specifying the number of creatures (probably received by the hero)
+4 bytes for each creature:
+2 for monster id (normal notation)
+2 per quantity (normal recording, max 9999)
+-
+8 zero bytes
+-
+1 byte to define which players can trigger the event (bit field; + 2 ^ (player-1's number); FF - all)
+1 byte, whether the computer player can activate the event (01 - yes, 00 - no)
+1 byte, whether to delete the event after the first visit (01 - yes, 00 - no)
+4 zero bytes
+
+-----------------------------
+events related to the castle (83 bytes +)
+4 bytes per name length
+name
+4 bytes per message length
+message
+28 bytes to determine raw material gain / loss (as always - I think)
+1 byte to define which players the event applies to (bit field as above)
+1 byte, whether the event should be related to human players (01) or not (00)
+1 byte, whether the event should be related to computer players (01) or not (00)
+2 bytes for the delay of the first occurrence in days (max 671)
+1 byte to define every how many days this event appears (00 - one-time event; max 28)
+17 zero bytes
+// you will see the bit fields below, due to their similarity, they were partially copied from the castle description
+1 byte - bit field;
++1 - build a city council
++2 - build city council
++4 - build a capitol
++8 - build a fort
++16 - build a citadel
++32 - build a castle
++64 - build an inn
++128 - build a forge
+1 byte - bit field
++1 - build a market
++2 - build a resource warehouse
++4 - build an artifact seller
++8 -build the 1st level of mages guild
++16 -build the 2nd level of the mages guild
++32 - build the 3rd level of the mages guild
++64 - build the 4th level of mages guild
++128 - build the 5th level of mages guild
+1 byte - bit field
++1 - build a shipyard
++2 - build a grail
++4 -build a lighthouse / magic pond / library / sulfur clouds / shroud of darkness / underground tunnel / blood obelisk / magic college
++8 -build the brotherhood of the sword / fountain of happiness / wall of knowledge / dimension gates / nektomatron / summoning portal / mercenary guild / wolf pits
++16 -build stables / treasury / brotherhood of fire / skeleton / war academy / large workshop / sanctuary
++32 - build halls of Valhalla
++64 - build gen1
++128 - build gen1 +
+1 byte - bit field
++1 - build birth / rozkopane tombs / devil's circle / cottage / officers' quarters / garden of life
++2 - build gen2
++4 - build gen2 +
++8 -build a mining guild / creator's wings
++16 - build gen3
++32 - build gen3 +
++64 - build a stronghold of griffins / cages
++128 - build gen4
+1 byte - bit field
++1 - build gen4 +
++4 - build gen5
++8 - build gen5 +
++18 - build a grove
++32 - build gen6
++64 - build gen6 +
++128 - build gen7
+1 byte - bit field
++1 - build gen7 +
+2 bytes for additional creature growth in generator 1
+2 bytes for extra creature growth in generator 2
+2 bytes for extra creature growth in generator 3
+2 bytes for extra creature growth in generator 4
+2 bytes for extra creature growth in generator 5
+2 bytes for extra creature growth in generator 6
+2 bytes for extra creature growth in generator 7
+
+
+--------------
+bytes about the availability of skills: (e5-e8 from the header)
+(done on bitfields)
+00 (e5)
++1 if road find unavailable
++2 if archery unavailable
++4 if logistics unavailable
++8 if discovering unavailable
++16 if diplomacy is unavailable
++32 if navigation is unavailable
++64 if command is unavailable
++128 if wisdom unavailable
+01 (e6)
++1 if mysticism unavailable
++2 if luck unavailable
++4 if ballistics is unavailable
++8 if no hawk sight is unavailable
++16 if necromancy unavailable
++32 if finances are unavailable
++64 if fire magic unavailable
++128 if air magic unavailable
+02 (e7)
++1 if water magic unavailable
++2 if earth magic unavailable
++4 if spell learning unavailable
++8 if tactic unavailable
++16 if artillery is unavailable
++32 if learning unavailable
++64 if attack is unavailable
++128 if arming is not available
+03 (e8)
++1 if intelligence unavailable
++2 if no magic talent available
++4 if immunity unavailable
++8 if first aid not available
+
+--------------------------------
+spell availability information (dc to e4 bytes)
+(on bit fields)
+{marking spells with consecutive numbers from 0, we will get quite a sensible list}
+00 (dc)
++1 if ship summoning unavailable
++2 if ship destruction is unavailable
++4 if vision unavailable
++8 if the earth's resources are unavailable
++16 if stealth unavailable
++32 if artifact aura unavailable
++64 if the flight is unavailable
++128 if water walk unavailable
+01 (dd)
++1 if dimension gates unavailable
++2 if city portal unavailable
++4 if the quicksand is unavailable
++8 if minefield unavailable
++16 if force field unavailable
++32 if fire wall unavailable
++64 if earthquake unavailable
++128 if magic arrow unavailable
+02 (de)
++1 if Ice Missile unavailable
+	+2, jeśli błyskawica niedostępna
+	+4, jeśli implozja niedostępna
+	+8, jeśli łańcuch piorunów niedostępny
+	+16, jeśli krąg zimna niedostępny
+	+32, jeśli kula ognia niedostępna
+	+64, jeśli inforno niedostępne
+	+128, jeśli deszcz meteorytów niedostępny
+03 (df)
+	+1, jeśli fala śmierci niedostępna
+	+2, jeśli zniszczenie nieumarłych niesotępne
+	+4, jeśli armagedon niedostępny
+	+8, jeśli tarcza niedostępna
+	+16, jeśli tarcza powietrza niedostępna
+	+32, jeśli tarcza ognia niedostępna
+	+64, jeśli ochrona przed powietrzem nidostępna
+	+128, jeśli ochrona przed ogniem niedostępna
+04 (e0)
+	+1, jeśli ochrona przed wodą niedostępna
+	+2, jeśli ochrona przed ziemią niedostępna
+	+4, jeśli antymagia niedostępna
+	+8, jeśli rozproszenie niedostępne
+	+16, jeśli magiczne zwierciadło niedostępne
+	+32, jeśli uleczenie niedostępne
+	+64, jeśli wskrzeszenie niedostępne
+	+128, jeśli ożywienie niedostępne
+05 (e1)
+	+1, jeśli ofiara niedostępna
+	+2, jeśli błogosławieństwo niedostępne
+	+4, jeśli klątwa niedostępna
+	+8, jeśli żądza krwi niedostępna
+	+16, jeśli precyzja niedostępna
+	+32, jeśli osłabienie niedostępne
+	+64, jeśli kamienna skóra niedostępna
+	+128, jeśli promień osłabienia niedostępny
+06 (e2)
+	+1, jeśli modlitwa niedostępna
+	+2, jeśli radość niedostępna
+	+4, jeśli przygnębienie niedostępne
+	+8, jeśli fortuna niedostępna
+	+16, jeśli pech niedostępny
+	+32, jeśli przyśpieszenie niedostępne
+	+64, jeśli spowolnienie niedostępne
+	+128, jeśli pogromca niedostępny
+07 (e3)
+	+1, jeśli szał niedostępny
+	+4, jeśli kontratak niedostępny
+	+8, jeśli berserk niedostępny
+	+16, jeśli hipnoza niedostępna
+	+32, jeśli zapomnienie niedostępne
+	+64, jeśli oślepienie niedostępne
+	+128, jeśli teleportacja niedostępna
+08 (e4)
+	+1, jeśli usunuięcie przeszkody niedostępne
+	+2, jeśli klonowanie niedostępne
+	+4, jeśli żywiołak ognia niedostępny
+	+8, jeśli żywiołak ziemi niedostępny
+	+16, jeśli żywiołak wody niedostępny
+	+32, jeśli żywiołak powietrza niedostępny
+
+---------------------------------------------
+informacje o niedostępności  artefaktów (00ca do 00db)
+niech x będzie podtypem arteftaktu (lista G)
+wtedy x-ty z kolei bit zakresu jest ustawiany ma 1
+
+--------------------------------------
+informacje o dostępności bohaterów (0092 do 00a5)
+{Uwaga! bohaterowie zrobieni są na polach bitowych, ale tu 1 oznacza, że bohater jest dostępny, a 0, że nie, w przeciwieńśtwie do artefaktów i takich tam}
+sytuacja podobna do niedostępności artefaktów; numery podtypów bohaterów odczytujemy z listy H i obliczmy pozycję odpowieniego bitu
+
+-----------------------------------------
+format zapisu tabliczki z napisem i butelki z wiadomością:
+3 bajty na położenie
+1 bajt na numer defa określającego tabliczkę / butelkę
+8 bajtów zerowych
+4 bajty na długość napisu w zapisie normalnym
+	wiadomość
+4 bajty zerowe
+
+------------------------------------------
+informacje o chatkach z misjami (podobnie jest dla strażnika granicznego z misją, tylko on nie ma bajtów na nagrody i 2 ostatnich zerowych)
+{uwaga! jesli nie ma misji (bajt 13 jest zerowy), to informacje o chatce mają tylko 16 bajtów}
+3 bajty na położenie
+1 bajt na numer defa
+8 bajtów zerowych
+1 na typ misji (0 - brak misji, 1 - osiągnij poziom, 2 - zdobądź określone statystyki, 3 - pokonaj konkretnego bohatera, 4 - pokonaj konkretnego potwora, 5 - zdobądź określone artefakty, 6 - przyłącz do armii określone stworzenia, 7 - przyniesienie odpowiednich surowców, 8 - przybycie do chatki konkretnego bohatera, 9 - przybycie bohatera konkretnego gracza)
+bajty:
+	dla misji 01:
+		1 bajt na poziom do zdobycia
+		3 bajty zerowe
+		4 bajty na termin zakończenia (numer w zapisie normalnym, pierwszy dzień gry oznaczony numerem 00, brak terminu zakończenia sygnalizują 4 bajty FF)
+	dla misji 02:
+		1 bajt na atak do zdobycia
+		1 bajt na obronę do zdobycia
+		1 bajt na moc do zdobycia
+		1 bajt na wiedzę do zdobycia
+		4 bajty FF (jak przy 01)
+	dla misji 03:
+		4 bajty opisujace typ bohatera (te następujące po ośmiu zerach w opisie bohatera, niezależne od miejsca)
+		4 bajty FF (jak przy 01)
+	dla misji 04:
+		4 bajty na typ potwora (4 bajty w opisie potworów następujące po 8 zerach - niezależne od położenia potwora)
+		4 bajty FF (jak przy 01)
+	dla misji 05:
+		1 bajt na ilosć artefaktów
+			2 bajty na każdy artefakt, określają jego id w zapisie normalnym (lista G)
+		4 bajty FF (jak przy 01)
+	dla misji 06:
+		1 bajt na ilość rodzajó stowrzeń
+			na każdego stwora:
+				2 bajty na podtyp (lista A)
+				2 bajty na ilość (w zapisie normalnym)
+		4 bajty FF (jak przy 01)
+	dla misji 07:
+		4 bajty na ilość drewna
+		4 bajty na ilość rudy
+		4 bajty na ilość rtęci
+		4 bajty na ilość siarki
+		4 bajty na ilość kryształów
+		4 bajty na ilość klejnotów
+		4 bajty na ilość złota (wszystko w zapisie normalnym)
+		4 bajty FF (jak przy 01)
+	dla misji 08:
+		1 bajt na typ bohatera (lista H)
+		4 bajty FF (jak przy 01)
+	dla misji 09:
+		1 bajt na numer gracza (od 0 do 7)
+		4 bajty FF (jak przy 01)
+4 bajty na długość wiadomośic wyświetlanej przy przyjściu do chatki po raz pierwszy (propozycja) (długość zerowa - wiadomość generowana automatycznie) (zapis normalny)
+	wiadomość
+4 bajty na długość wiadomości wyświetlanej przy kolejnym przyjściu do chatki przed wypełnieniem misji (postępy)
+	wiadomość
+4 bajty na długość wiadomości wyświetlanej w przypadku, gdy misja się powiedzie (powodzenie)
+	wiadomość
+1 bajt określający rodzaj nagrody (00 - brak, 01 - dośwaidczenie, 02 - punkty many, 03 - morale, 04 - szczęście, 05 - surowce, 06 - premia do umiejętności podstawowej, 07 - umiejętność drugorzędna, 08 - artefakt, 09 - czar, 0a - stworzenie)
+dodatkowe bajty na nagrody
+	dla nagrody 00:
+		brak
+	dla nagrody 01:
+		4 bajty określające ilość doświadczenia (zapis normalny)
+	dla nagordy 02:
+		4 bajty określające ilość many (zapis normalny, max 999?)
+	dla nagrody 03:
+		1 bajt określający premię do morale (+1 - 01, +2 - 02, +3 - 03)
+	dla nagrody 04:
+		1 bajt określający premię do szczęścia (+1 - 01, +2 - 02, +3 - 03)
+	dla nagrody 05:
+		1 bajt określający rodzaj surowca (00 - drewno, 01 - rtęć, 02 - ruda, 03 - siarka, 04 - kryształ, 05 - klejnoty, 06 - złoto)
+		3 bajty określające ilość (zapis normalny, max 99999)
+	dla nagrody 06:
+		1 bajt określający rodzaj premii (00 - atak, 01 - obrona, 02 - moc, 03 - wiedza)
+		1 bajt na wartość premii (maksymalnie 99)
+	dla nagordy 07:
+		1 bajt na określenie rodzaju umiejętności (patrz lista bajtów o dostępności, numeruj od 00)
+		1 bajt na określenie poziomu umiejętności (01 - basic, 02 - advanced, 03 - expert)
+	dla nagrody 08:
+		2 bajty na id artefaktu (patrz lista G)
+	dla nagordy 09:
+		1 bajt określający id czaru (patrz informacje o dostępności czarów, numerowanie bitów od 00)
+	dla nagrody 0a:
+		2 bajty określające id potwora (patrz lista A)
+		2 bajty określające ilość potworów (zapis normalny, max 9999)
+2 bajty zerowe
+
+--------------------------------------
+informacje o chatkach czarownicy (16 bajtów)
+4 bajty jak zawsze (poł+def)
+8 bajtów zerowych
+4 bajty na dostępne umiejętności (jak bajty o dostępności umiejętności)
+
+--------------------------------------
+informacje o Uczonym (20 bajtów)
+4 bajty jak zawsze (poł+def)
+8 bajtów zerowych
+1 bajt określający losowość premii (FF - losowa, 00 - umiejętność podstawowa, 01 - umiejętność drugorzędna, 02 - czar)
+	FF: 1 bajt 00
+	00: 1 bajt określający rodzaj premii podstawowej (00 - atak, 01 - obrona, 02 - moc,	03 - wiedza)
+	01: 1 bajt określający rodzaj umiejętności (patrz lista umiejętności, numerowanie od 0)
+	02: 1 bajt określający id czaru (jak wcześniej)
+6 bajtów zerowych
+
+------------------------------------------
+Informacje o garnizonie (53 bajty)
+4 bajty jak zawsze (poł+def)
+8 bajtów zerowych
+1 bajt określający przynależność do gracza (FF - niczyje, wpp. numer gracza taki jak w edytorze - 1)
+3 bajty 00
+28 bajtów na jednostki (chyba tak samo jak przy bohaterach)
+1 bajt określający, czy jednostki mogą być przenoszone (01), czy nie (00)
+8 bajtów zerowych
+
+	_________________________________
+
+UWAGA - WARTOŚCI W SYSTEMIE DZIESIĘTNYM!
+
+
+---
+LISTY (pokopiowane z dokumentacji ERMa)
+Lista A
+0   Pikeman
+1 	Halberdier
+2 	Archer
+3 	Marksman
+4 	Griffin
+5 	Royal Griffin
+6 	Swordsman
+7 	Crusader
+8 	Monk
+9 	Zealot
+10 	Cavalier
+11 	Champion
+12 	Angel
+13 	Archangel
+14 	Centaur
+15 	Centaur Captain
+16 	Dwarf
+17 	Battle Dwarf
+18 	Wood Elf
+19 	Grand Elf
+20 	Pegasus
+21 	Silver Pegasus
+22 	Dendroid Guard
+23 	Dendroid Soldier
+24 	Unicorn
+25 	War Unicorn
+26 	Green Dragon
+27 	Gold Dragon
+28 	Gremlin
+29 	Master Gremlin
+30 	Stone Gargoyle
+31 	Obsidian Gargoyle
+32 	Stone Golem
+33 	Iron Golem
+34 	Mage
+35 	Arch Mage
+36 	Genie
+37 	Master Genie
+38 	Naga
+39 	Naga Queen
+40 	Giant
+41 	Titan
+42 	Imp
+43 	Familiar
+44 	Gog
+45 	Magog
+46 	Hell Hound
+47 	Cerberus
+48 	Demon
+49 	Horned Demon
+50 	Pit Fiend
+51 	Pit Lord
+52 	Efreeti
+53 	Efreet Sultan
+54 	Devil
+55 	Arch Devil
+56 	Skeleton
+57 	Skeleton Warrior
+58 	Walking Dead
+59 	Zombie
+60 	Wight
+61 	Wraith
+62 	Vampire
+63 	Vampire Lord
+64 	Lich
+65 	Power Lich
+66 	Black Knight
+67 	Dread Knight
+68 	Bone Dragon
+69 	Ghost Dragon
+70 	Troglodyte
+71 	Infernal Troglodyte
+72 	Harpy
+73 	Harpy Hag
+74 	Beholder
+75 	Evil Eye
+76 	Medusa
+77 	Medusa Queen
+78 	Minotaur
+79 	Minotaur King
+80 	Manticore
+81 	Scorpicore
+82 	Red Dragon
+83 	Black Dragon
+84 	Goblin
+85 	Hobgoblin
+86 	Wolf Rider
+87 	Wolf Raider
+88 	Orc
+89 	Orc Chieftain
+90 	Ogre
+91 	Ogre Mage
+92 	Roc
+93 	Thunderbird
+94 	Cyclops
+95 	Cyclops King
+96 	Behemoth
+97 	Ancient Behemoth
+98 	Gnoll
+99 	Gnoll Marauder
+100 	Lizardman
+101 	Lizard Warrior
+102 	Gorgon
+103 	Mighty Gorgon
+104 	Serpent Fly
+105 	Dragon Fly
+106 	Basilisk
+107 	Greater Basilisk
+108 	Wyvern
+109 	Wyvern Monarch
+110 	Hydra
+111 	Chaos Hydra
+112 	Air Elemental
+113 	Earth Elemental
+114 	Fire Elemental
+115 	Water Elemental
+116 	Gold Golem
+117 	Diamond Golem
+118 	Pixie
+119 	Sprite
+120 	Psychic Elemental
+121 	Magic Elemental
+122 	NOT USED (attacker)
+123 	Ice Elemental
+124 	NOT USED (defender)
+125 	Magma Elemental
+126 	NOT USED (3)
+127 	Storm Elemental
+128 	NOT USED (4)
+129 	Energy Elemental
+130 	Firebird
+131 	Phoenix
+132 	Azure Dragon
+133 	Crystal Dragon
+134 	Faerie Dragon
+135 	Rust Dragon
+136 	Enchanter
+137 	Sharpshooter
+138 	Halfling
+139 	Peasant
+140 	Boar
+141 	Mummy
+142 	Nomad
+143 	Rogue
+144 	Troll
+145 	Catapult (specialty X1)
+146 	Ballista (specialty X1)
+147 	First Aid Tent (specialty X1)
+148 	Ammo Cart (specialty X1)
+149 	Arrow Towers (specialty X1)
+150 	Supreme Archangel
+151 	Diamond Dragon
+152 	Lord of Thunder
+153 	Antichrist
+154 	Blood Dragon
+155 	Darkness Dragon
+156 	Ghost Behemoth
+157 	Hell Hydra
+158 	Sacred Phoenix
+159 	Ghost
+160 	Emissary of War
+161 	Emissary of Peace
+162 	Emissary of Mana
+163 	Emissary of Lore
+164 	Fire Messenger
+165 	Earth Messenger
+166 	Air Messenger
+167 	Water Messenger
+168 	Gorynych
+169 	War zealot
+170 	Arctic Sharpshooter
+171 	Lava Sharpshooter
+172 	Nightmare
+173 	Santa Gremlin
+174 	Paladin (attacker)
+175 	Hierophant (attacker)
+176 	Temple Guardian (attacker)
+177 	Succubus (attacker)
+178 	Soul Eater (attacker)
+179 	Brute (attacker)
+180 	Ogre Leader (attacker)
+181 	Shaman (attacker)
+182 	Astral Spirit (attacker)
+183 	Paladin (defender)
+184 	Hierophant (defender)
+185 	Temple Guardian (defender)
+186 	Succubus (defender)
+187 	Soul Eater (defender)
+188 	Brute (defender)
+189 	Ogre Leader (defender)
+190 	Shaman (defender)
+191 	Astral Spirit (defender)
+192 	Sylvan Centaur
+193 	Sorceress
+194 	Werewolf
+195 	Hell Steed
+196 	Dracolich
+
+
+Lista B (17. bajt opisu defa dla przeszkody terenowej - TYP OBIEKTU)
+0  	<none>
+1 	<none>
+2 	Altar of Sacrifice
+3 	Anchor Point
+4 	Arena
+5 	Artifact [0-143 - Format A1]
+6 	Pandora's Box
+7 	Black Market
+8 	Boat
+9 	Borderguard [0-7 - Format BG]
+10 	Keymaster's Tent
+[0-7 - Format BG]
+11 	Buoy
+12 	Campfire
+13 	Cartographer
+14 	Swan Pond
+15 	Cover of Darkness
+16 	Creature Bank
+[0-20 - Format CB]
+17 	Creature Generator 1
+[0-95 - Format CG]
+18 	Creature Generator 2
+19 	Creature Generator 3
+20 	Creature Generator 4
+[0-1 - Format CG]
+21 	Cursed Ground
+22 	Corpse
+23 	Marletto Tower
+24 	Derelict Ship
+25 	Dragon Utopia
+26 	Event
+27 	Eye of the Magi
+28 	Faerie Ring
+29 	Flotsam
+30 	Fountain of Fortune
+31 	Fountain of Youth
+32 	Garden of Revelation
+33 	Garrison
+[0 = ordinary, 1 = antimagic]
+34 	Hero [0-155 - Format H]
+35 	Hill Fort
+36 	Grail
+37 	Hut of the Magi
+38 	Idol of Fortune
+39 	Lean To
+40 	<blank>
+41 	Library of Enlightenment
+42 	Lighthouse
+43 	Monolith One Way Entrance
+[0 - 7 - Format M1 ]
+44 	Monolith One Way Exit
+[0 - 7 - Format M1 ]
+45 	Monolith Two Way
+[0 - 7 - Format M2 ]
+46 	Magic Plains
+47 	School of Magic
+48 	Magic Spring
+49 	Magic Well
+50 	<blank>
+51 	Mercenary Camp
+52 	Mermaid
+53 	Mine [0 - 7 - Format MI ]
+54 	Monster [0 - 196 - Format C]
+55 	Mystical Garden
+56 	Oasis
+57 	Obelisk
+58 	Redwood Observatory
+59 	Ocean Bottle
+60 	Pillar of Fire
+61 	Star Axis
+62 	Prison
+63 	Pyramid
+[0 - 74 - Castle Editor Objects]
+64 	Rally Flag
+65 	Random Artifact
+66 	Random Treasure Artifact
+67 	Random Minor Artifact
+68 	Random Major Artifact
+69 	Random Relic
+70 	Random Hero
+71 	Random Monster
+72 	Random Monster 1
+73 	Random Monster 2
+74 	Random Monster 3
+75 	Random Monster 4
+76 	Random Resource
+77 	Random Town
+78 	Refugee Camp
+79 	Resource [0 - 7 - Format R]
+80 	Sanctuary
+81 	Scholar
+82 	Sea Chest
+83 	Seer's Hut
+84 	Crypt
+85 	Shipwreck
+86 	Shipwreck Survivor
+87 	Shipyard
+88 	Shrine of Magic Incantation
+89 	Shrine of Magic Gesture
+90 	Shrine of Magic Thought
+91 	Sign
+92 	Sirens
+93 	Spell Scroll [0 - 69 - Format SP]
+94 	Stables
+95 	Tavern
+96 	Temple
+97 	Den of Thieves
+98 	Town [0 - 8 -Format T]
+99 	Trading Post
+100 	Learning Stone
+101 	Treasure Chest [UN:B]
+102 	Tree of Knowledge
+103 	Subterranean Gate
+104 	University
+105 	Wagon
+106 	War Machine Factory
+107 	School of War
+108 	Warrior's Tomb
+109 	Water Wheel
+110 	Watering Hole
+111 	Whirlpool
+112 	Windmill
+113 	Witch Hut [0 - 27 - Format SS]
+114 	Brush
+115 	Bush
+116 	Cactus
+117 	Canyon
+118 	Crater
+119 	Dead Vegetation
+120 	Flowers
+121 	Frozen Lake
+122 	Hedge
+123 	Hill
+124 	Hole
+125 	Kelp
+126 	Lake
+127 	Lava Flow
+128 	Lava Lake
+129 	Mushrooms
+130 	Log
+131 	Mandrake
+132 	Moss
+133 	Mound
+134 	Mountain
+135 	Oak Trees
+136 	Outcropping
+137 	Pine Trees
+138 	Plant
+143 	River Delta
+147 	Rock
+148 	Sand Dune
+149 	Sand Pit
+150 	Shrub
+151 	Skull
+152 	Stalagmite
+153 	Stump
+154 	Tar Pit
+155 	Trees
+156 	Vine
+157 	Volcanic Vent
+158 	Volcano
+159 	Willow Trees
+160 	Yucca Trees
+161 	Reef
+162 	Random Monster 5
+163 	Random Monster 6
+164 	Random Monster 7
+165 	Brush
+166 	Bush
+167 	Cactus
+168 	Canyon
+169 	Crater
+170 	Dead Vegetation
+171 	Flowers
+172 	Frozen Lake
+173 	Hedge
+174 	Hill
+175 	Hole
+176 	Kelp
+177 	Lake
+178 	Lava Flow
+179 	Lava Lake
+180 	Mushrooms
+181 	Log
+182 	Mandrake
+183 	Moss
+184 	Mound
+185 	Mountain
+186 	Oak Trees
+187 	Outcropping
+188 	Pine Trees
+189 	Plant
+190 	River Delta
+191 	Rock
+192 	Sand Dune
+193 	Sand Pit
+194 	Shrub
+195 	Skull
+196 	Stalagmite
+197 	Stump
+198 	Tar Pit
+199 	Trees
+200 	Vine
+201 	Volcanic Vent
+202 	Volcano
+203 	Willow Trees
+204 	Yucca Trees
+205 	Reef
+206 	Desert Hills
+207 	Dirt Hills
+208 	Grass Hills
+209 	Rough Hills
+210 	Subterranean Rocks
+211 	Swamp Foliage
+212 	Border Gate [0-7 - Format BG]
+213 	Freelancer's Guild
+214 	Hero Placeholder
+215 	Quest Guard
+216 	Random Dwelling
+217 	<none> {te zielone generatory stworzeń z ustalonym poziomem lecz nieustalonym typem zamku}
+218 	<none> {te zielone generatory z ustalonym typem zamku ale niczym poza tym}
+219 	Garrison
+220 	Mine
+221 	Trading Post
+222 	Clover Field
+223 	Cursed Ground
+224 	Evil Fog
+225 	Favourable Winds
+226 	Fiery Fields
+227 	Holy Ground
+228 	Lucid Pools
+229 	Magic Clouds
+230 	Magic Plains
+231 	Rocklands
+
+Lista C
+nieaktualna
+
+Lista D
+nieaktualna
+
+Lista E: Lista podtypów obiektów typu 53 (kopalnie; 21. bajt deklaracji defa):
+0 - Sawmill
+1 - Alchemist's Lab
+2 - Ore Pit
+3 - Sulfur Dune
+4 - Crystal Cavern
+5 - Gem Pond
+6 - Gold Mine
+7 - Abandoned Mine
+
+
+Lista F
+nieaktualna
+
+Lista G (podtypy artefaktów)
+0 	Spell book
+1 	Spell Scroll
+2 	Grail
+3 	Catapult
+4 	Ballista
+5 	Ammo Cart
+6 	First Aid Tent
+7 	Centaur Axe
+8 	Blackshard of the Dead Knight
+9 	Greater Gnoll's Flail
+10 	Ogre's Club of Havoc
+11 	Sword of Hellfire
+12 	Titan's Gladius
+13 	Shield of the Dwarven Lords
+14 	Shield of the Yawning Dead
+15 	Buckler of the Gnoll King
+16 	Targ of the Rampaging Ogre
+17 	Shield of the Damned
+18 	Sentinel's Shield
+19 	Helm of the Alabaster Unicorn
+20 	Skull Helmet
+21 	Helm of Chaos
+22 	Crown of the Supreme Magi
+23 	Hellstorm Helmet
+24 	Thunder Helmet
+25 	Breastplate of Petrified Wood
+26 	Rib Cage
+27 	Scales of the Greater Basilisk
+28 	Tunic of the Cyclops King
+29 	Breastplate of Brimstone
+30 	Titan's Cuirass
+31 	Armor of Wonder
+32 	Sandals of the Saint
+33 	Celestial Necklace of Bliss
+34 	Lion's Shield of Courage
+35 	Sword of Judgement
+36 	Helm of Heavenly Enlightenment
+37 	Quiet Eye of the Dragon
+38 	Red Dragon Flame Tongue
+39 	Dragon Scale Shield
+40 	Dragon Scale Armor
+41 	Dragonbone Greaves
+42 	Dragon Wing Tabard
+43 	Necklace of Dragonteeth
+44 	Crown of Dragontooth
+45 	Still Eye of the Dragon
+46 	Clover of Fortune
+47 	Cards of Prophecy
+48 	Ladybird of Luck
+49 	Badge of Courage
+50 	Crest of Valor
+51 	Glyph of Gallantry
+52 	Speculum
+53 	Spyglass
+54 	Amulet of the Undertaker
+55 	Vampire's Cowl
+56 	Dead Man's Boots
+57 	Garniture of Interference
+58 	Surcoat of Counterpoise
+59 	Boots of Polarity
+60 	Bow of Elven Cherrywood
+61 	Bowstring of the Unicorn's Mane
+62 	Angel Feather Arrows
+63 	Bird of Perception
+64 	Stoic Watchman
+65 	Emblem of Cognizance
+66 	Statesman's Medal
+67 	Diplomat's Ring
+68 	Ambassador's Sash
+69 	Ring of the Wayfarer
+70 	Equestrian's Gloves
+71 	Necklace of Ocean Guidance
+72 	Angel Wings
+73 	Charm of Mana
+74 	Talisman of Mana
+75 	Mystic Orb of Mana
+76 	Collar of Conjuring
+77 	Ring of Conjuring
+78 	Cape of Conjuring
+79 	Orb of the Firmament
+80 	Orb of Silt
+81 	Orb of Tempestuous Fire
+82 	Orb of Driving Rain
+83 	Recanter's Cloak
+84 	Spirit of Oppression
+85 	Hourglass of the Evil Hour
+86 	Tome of Fire Magic
+87 	Tome of Air Magic
+88 	Tome of Water Magic
+89 	Tome of Earth Magic
+90 	Boots of Levitation
+91 	Golden Bow
+92 	Sphere of Permanence
+93 	Orb of Vulnerability
+94 	Ring of Vitality
+95 	Ring of Life
+96 	Vial of Lifeblood
+97 	Necklace of Swiftness
+98 	Boots of Speed
+99 	Cape of Velocity
+100 	Pendant of Dispassion
+101 	Pendant of Second Sight
+102 	Pendant of Holiness
+103 	Pendant of Life
+104 	Pendant of Death
+105 	Pendant of Free Will
+106 	Pendant of Negativity
+107 	Pendant of Total Recall
+108 	Pendant of Courage
+109 	Everflowing Crystal Cloak
+110 	Ring of Infinite Gems
+111 	Everpouring Vial of Mercury
+112 	Inexhaustible Cart of Ore
+113 	Eversmoking Ring of Sulfur
+114 	Inexhaustible Cart of Lumber
+115 	Endless Sack of Gold
+116 	Endless Bag of Gold
+117 	Endless Purse of Gold
+118 	Legs of Legion
+119 	Loins of Legion
+120 	Torso of Legion
+121 	Arms of Legion
+122 	Head of Legion
+123 	Sea Captain's Hat
+124 	Spellbinder's Hat
+125 	Shackles of War
+126 	Orb of Inhibition
+127 	Vial of Dragon Blood
+128 	Armageddon's Blade
+129 	Angelic Alliance
+130 	Cloak of the Undead King
+131 	Elixir of Life
+132 	Armor of the Damned
+133 	Statue of Legion
+134 	Power of the Dragon Father
+135 	Titan's Thunder
+136 	Admiral's Hat
+137 	Bow of the Sharpshooter
+138 	Wizard's Well
+139 	Ring of the Magi
+140 	Cornucopia
+141 	Magic Wand *
+142 	Gold Tower Arrow *
+143 	Monster's Power *
+144 	Highlighted Slot **
+145 	Artifact Lock **
+146 	Axe of Smashing ***
+147 	Mithril Mail ***
+148 	Sword of Sharpness ***
+149 	Helm of Immortality ***
+150 	Pendant of Sorcery ***
+151 	Boots of Haste ***
+152 	Bow of Seeking ***
+153 	Dragon Eye Ring ***
+154 	Hardened Shield ***
+155 	Slava's Ring of Power ***
+156 	Warlord's banner *
+157 	Crimson Shield of Retribution *
+158 	Barbarian Lord's Axe of Ferocity *
+159 	Dragonheart *
+160 	Gate Key *
+161 	Blank Helmet ****
+162 	Blank Sword ****
+163 	Blank Shield ****
+164 	Blank Horned Ring ****
+165 	Blank Gemmed Ring ****
+166 	Blank Neck Broach ****
+167 	Blank Armor ****
+168 	Blank Surcoat ****
+169 	Blank Boots ****
+170 	Blank Horn ****
+
+*    WoG artifacts
+**   Not artifacts (internal use only)
+***  Commander Artifacts
+**** Blank Artifacts
+
+
+
+Lista H (podtypy bohaterów)
+   	  Knights
+0 	Orrin
+1 	Valeska
+2 	Edric
+3 	Sylvia
+4 	Lord Haart
+5 	Sorsha
+6 	Christian
+7 	Tyris
+  	Clerics
+8 	Rion
+9 	Adela
+10 	Cuthbert
+11 	Adelaide
+12 	Ingham
+13 	Sanya
+14 	Loynis
+15 	Caitlin
+  	Rangers
+16 	Mephala
+17 	Ufretin
+18 	Jenova
+19 	Ryland
+20 	Thorgrim
+21 	Ivor
+22 	Clancy
+23 	Kyrre
+  	Druids
+24 	Coronius
+25 	Uland
+26 	Elleshar
+27 	Gem
+28 	Malcom
+29 	Melodia
+30 	Alagar
+31 	Aeris
+  	Alchemists
+32 	Piquedram
+33 	Thane
+34 	Josephine
+35 	Neela
+36 	Torosar
+37 	Fafner
+38 	Rissa
+39 	Iona
+  	Wizards
+40 	Astral
+41 	Halon
+42 	Serena
+43 	Daremyth
+44 	Theodorus
+45 	Solmyr
+46 	Cyra
+47 	Aine
+  	Demoniacs
+48 	Fiona
+49 	Rashka
+50 	Marius
+51 	Ignatius
+52 	Octavia
+53 	Calh
+54 	Pyre
+55 	Nymus
+  	Heretics
+56 	Ayden
+57 	Xyron
+58 	Axsis
+59 	Olema
+60 	Calid
+61 	Ash
+62 	Zydar
+63 	Xarfax
+  	Death Knights
+64 	Straker
+65 	Vokial
+66 	Moandor
+67 	Charna
+68 	Tamika
+69 	Isra
+70 	Clavius
+71 	Galthran
+  	Necromancers
+72 	Septienna
+73 	Aislinn
+74 	Sandro
+75 	Nimbus
+76 	Thant
+77 	Xsi
+78 	Vidomina
+79 	Nagash
+  	Overlords
+80 	Lorelei
+81 	Arlach
+82 	Dace
+83 	Ajit
+84 	Damacon
+85 	Gunnar
+86 	Synca
+87 	Shakti
+  	Warlocks
+88 	Alamar
+89 	Jaegar
+90 	Malekith
+91 	Jeddite
+92 	Geon
+93 	Deemer
+94 	Sephinroth
+95 	Darkstorn
+  	Barbarians
+96 	Yog
+97 	Gurnisson
+98 	Jabarkas
+99 	Shiva
+100 	Gretchin
+101 	Krellion
+102 	Crag Hack
+103 	Tyraxor
+  	Battle Mages
+104 	Gird
+105 	Vey
+106 	Dessa
+107 	Terek
+108 	Zubin
+109 	Gundula
+110 	Oris
+111 	Saurug
+  	Beastmasters
+112 	Bron
+113 	Drakon
+114 	Wystan
+115 	Tazar
+116 	Alkin
+117 	Korbac
+118 	Gerwulf
+119 	Broghild
+  	Witches
+120 	Mirlanda
+121 	Rosic
+122 	Voy
+123 	Verdish
+124 	Merist
+125 	Styg
+126 	Andra
+127 	Tiva
+  	Planeswalkers
+128 	Pasis
+129 	Thunar
+130 	Ignissa
+131 	Lacus
+132 	Monere
+133 	Erdamon
+134 	Fiur
+135 	Kalt
+  	Elementalists
+136 	Luna
+137 	Brissa
+138 	Ciele
+139 	Labetha
+140 	Inteus
+141 	Aenain
+142 	Gelare
+143 	Grindan
+  	Extension Heroes
+144 	Sir Mullich
+145 	Adrienne
+146 	Catherine
+147 	Dracon
+148 	Gelu
+149 	Kilgor
+150 	Lord Haart
+151 	Mutare
+152 	Roland
+153 	Mutare Drake
+154 	Boragus
+155 	Xeron
+_______________________________________________________
+UWAGI:
+Uwaga 1
+nieaktualna
+
+
+___________
+Uwaga 2
+nieaktualna
