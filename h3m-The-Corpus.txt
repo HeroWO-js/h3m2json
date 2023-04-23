@@ -12,6 +12,17 @@ This documents the entire .h3m binary file format based on:
 
   4. Original trial & error on h3maped.exe and Heroes3.exe (both v3.0.0.0, SoD)
 
+HotA support is mainly based on FreeHeroes code (MIT), including:
+
+  5. https://github.com/mapron/FreeHeroes
+     Commit 7585701759973d8d8e003cfca7d2f609713c82a5 (2023)
+     Parsing code belongs to src\Core\MapUtil\, in particular to H3MObjects.cpp
+
+  6. Insights about the format from FH's author (Smirnov Vladimir @mapron):
+     https://github.com/HeroWO-js/h3m2json/issues/1
+
+  7. Original trial & error on HotA v1.6.1.
+
 All strings are Pascal-type (leading length uint32), ASCII (locale-dependent).
 
 Virtually all numbers are unsigned Little-Endian, with few exceptions.
@@ -31,12 +42,17 @@ This file is licensed under public domain/Unlicense.
 
 [uint32] format       parse_h3m.c, h3m_format.h
   RoE 0x0E, AB 0x15, SoD 0x1C, CHR(?) 0x1D, WoG 0x33      h3m_format.h
+  HotA1 0x1E, HotA2 0x1F, HotA3 0x20, VCMI 0xF0     H3MObjects.hpp
   GZIP magic is uint16 1F 8B (0x8B1F; inflate(), inflate.c:664)
+[uint32] hota format1 (only seen 1 and 3 in the wild)  #only if HotA*
+[uint16] hota format2 (only seen 0 in the wild)   #only if HotA*
+[uint32] hota format3 (only seen 12 in the wild)  #only if HotAv3
+  here and below, "HotAv3" means "HotA3 and format1 >= 3"; in FH, it's "HotA* and format1 >= 3" but it's likely a mistake
 [...] basic info      parse_bi.c, h3m_bi.h
   [uint8] is playable (possibly not used in some cases/maps; called has_hero in h3mlib)
     at least two cases are known to clear this flag: 1) having no heroes and towns on map (independent of visiting heroes and "Generate hero at main town") and 2) having less than (11*count-1) Heroes checked in Map Specifications ("-1" because of the "Lord Haart" bug, see below; actually set bits in the available heroes field may be fewer than that due to hero objects on map)
     it seems that when this is set, SoD's map selection menu shows "This map is not playable" in place of map description; if there are no heroes/towns, the menu shows such map without players and attempt to start it gives an error; in other cases you can still start the game
-  [uint32] map_size (width and height, square; 36 small, 72 medium, 108 large, 144 extra large)
+  [uint32] map_size (width and height, square; 36 small, 72 medium, 108 large, 144 extra large; unknown when introduced exactly, assuming HotA*: 180 huge, 216 extra huge, 252 giant)
   [uint8] has_two_levels (0 single level, 1 has underground)
   [uint32] name_size (editor limits to 30)
   [...] name
@@ -52,7 +68,7 @@ This file is licensed under public domain/Unlicense.
     [uint8] can_be_computer
     [uint8] behavior (0 random, 1 warrior, 2 builder, 3 explorer)
     [uint8] customized alignments (often contains junk when (!human and !computer))    #only if SoD
-    [uint8] town_types (bitfield: Castle, Rampart, Tower, Inferno, Necropolis, Dungeon, Stronghold, Fortress)
+    [uint8] town_types (bitfield: Castle, Rampart, Tower, Inferno, Necropolis, Dungeon, Stronghold, Fortress; Complete: 8 Conflux; HotA*: 9 Cove)
     [uint8] town_conflux (bitfield with 1 LSB bit)    #only if AB/SOD
     [uint8] random town (if <> 0, implies all town types are enabled; unlike other bool fields, this often uses junk (>01) for TRUE)
       customized alignments is controlled by editor's Map Spec | Player Spec | Allowed alignments | "Customize" checkbox
@@ -142,7 +158,7 @@ This file is licensed under public domain/Unlicense.
         [uint32] name_size (0 for default)
         [...] name
 [...] additional info      parse_ai.c, h3m_ai.h
-  [uint8] win_cond_type (0 acquire artifact, 1 accumulate creatures, 2 accumulate resources, 3 upgrade town, 4 build grail, 5 defeat hero, 6 capture town, 7 defeat monster, 8 flag dwellings, 9 flag mines, 10 transport artifact, 0xFF normal)
+  [uint8] win_cond_type (0 acquire artifact, 1 accumulate creatures, 2 accumulate resources, 3 upgrade town, 4 build grail, 5 defeat hero, 6 capture town, 7 defeat monster, 8 flag dwellings, 9 flag mines, 10 transport artifact, 0xFF normal; unknown when introduced exactly, assuming HotA*: 11 defeat all monsters, 12 survive for given time)
   [...] win condition   parse_ai_win_cond.c, h3m_ai_win_cond.h
     [...] ACQUIRE_ARTIFACT info   #only if corresponds to type
       [uint8] allow_normal_win (editor doesn't allow this to be set; possibly ignored by game)
@@ -164,6 +180,7 @@ This file is licensed under public domain/Unlicense.
       [uint8] allow_normal_win (if type == build grail or defeat hero, editor doesn't allow this to be set)
       [uint8] applies_to_computer (if type <> capture town, editor doesn't allow this to be set, sets it implicitly)
       [uint8] xpos (of actionable spot; if type == build grail: if all x/y/zpos == 0xFF means any town)
+        in HotA (unknown when introduced exactly, assuming HotA*), monsters are 3x2 (in SoD they are 2x2)
       [uint8] ypos
       [uint8] zpos
     [...] UPGRADE_TOWN info   #only if corresponds to type
@@ -184,6 +201,13 @@ This file is licensed under public domain/Unlicense.
       [uint8] xpos (of actionable spot)
       [uint8] ypos
       [uint8] zpos
+    [...] defeal all monsters info   #only if corresponds to type
+      [uint8] allow_normal_win
+      [uint8] applies_to_computer (expect off)
+    [...] survive for given time info   #only if corresponds to type
+      [uint8] allow_normal_win
+      [uint8] applies_to_computer (expect off)
+      [uint16] days (1-based, win when days + 1 dawns)
   [uint8] lose_cond_type (0 lose town, 1 lose hero, 2 time expires, 0xFF normal)
   [...] lose condition  parse_ai_lose_cond.c, h3m_ai_lose_cond.h
     [...] POSITION info   #only if lose town/hero
@@ -196,6 +220,7 @@ This file is licensed under public domain/Unlicense.
   N identical structures, one per player, N = 8, in order of basic info   #only if max_team <> 0
       parse_ai_teams.c, h3m_ai_teams.h
     [uint8] team number for player (< max_team)
+  [uint32] hero count (expect 179 in v3, else 178), overrides next bitfield's length   #only if HotA*
   16 bytes, each bit = hero availability flag (index in HOTRAITS.TXT)   #only RoE
   20 bytes, each bit = hero availability flag (ditto)   #only AB/SoD
     bits are off for Map Specifications | Heroes and for heroes already placed on map or specified in town Properties | Visiting hero; this seems to be used for Starting Hero in map's Advanced Options when starting a game (further filtered on run-time by hero class vs alignment of Starting Town and removing already picked Starting Heroes by other players; if none remain, only allow Random hero and ignore clicks to left/right arrows around its image)
@@ -213,6 +238,13 @@ This file is licensed under public domain/Unlicense.
     [...] name
     [uint8] which players can hire (bitfield, 0xFF for all - the default; players not existing on map usually have their bits set)
   31 bytes, reserved (must be all 0s)
+  [...] hota extra header   #only if HotA*
+      H3MMap.cpp - H3Map::readBinary()
+    [uint32] enable special weeks (bool)
+    [uint16] unknown (expect 16)
+    4 bytes, unknown (should be 0s)
+    [uint32] max number of rounds (0xFFFFFFFF, if none)  #only if HotAv3
+    [uint32] artifact count (expect 165 in v3, else 163), overrides next bitfield's length
   17 bytes, each bit = artifact *non* availability flag (order in ARTRAITS.TXT)   #only AB
   18 bytes, each bit = artifact *non* availability flag (same)   #only SoD
   9 bytes, each bit = spell *non* availability flag (order in SPTRAITS.TXT)   #only SoD
@@ -226,6 +258,7 @@ This file is licensed under public domain/Unlicense.
     [...] name
     [uint32] desc_size (editor limits to 300)
     [...] desc
+  [uint32] hero count (presumably matches the count written before hero availability flag), overrides the following N   #only if HotA*
   N identical structures, one per hero, N = 156   #only SoD
       parse_ai_hero_settings.c, h3m_ai_hero_settings.h
     [uint8] has_settings
@@ -281,13 +314,13 @@ This file is licensed under public domain/Unlicense.
   N identical structures, one per each dimension, N = has_two_levels ? 2 : 1
     N identical structures, one per each coord, N = map_size ^ 2
         h3m_tile.h
-      [uint8] terrain_type (0 dirt, 1 sand, 2 grass, 3 snow, 4 swamp, 5 rough, 6 subterranean, 7 lava, 8 water, 9 rock)
+      [uint8] terrain_type (0 dirt, 1 sand, 2 grass, 3 snow, 4 swamp, 5 rough, 6 subterranean, 7 lava, 8 water, 9 rock; unknown when introduced exactly, assuming HotA*: 10 highland, 11 wasteland)
       [uint8] terrain_sprite (object subclass)
       [uint8] river_type (0 none, 1 clear, 2 icy, 3 muddy, 4 lava)
       [uint8] river_sprite (0-3 corners, 4 +, 5 6 T, 7 8 ├, 9 10 |, 11 12 --)
       [uint8] road_type (0 none, 1 dirt, 2 gravel, 3 cobblestone)
       [uint8] road_sprite (0-5 corners, 6 7 ├, 8 9 T, 10 11 |, 12 13 --, 14 ', 15 -, 16 +)
-      [uint8] mirroring (bitfield: horizontal terrain, vertical terrain, horizontal river, vertical river, horizontal road, vertical road, coast)
+      [uint8] mirroring (bitfield: horizontal terrain, vertical terrain, horizontal river, vertical river, horizontal road, vertical road, coast, favorable winds (taken from H3MMap.hpp - MapTileH3M.ExtFlags))
         coast is set for non-water tiles adjacent to water tiles, including corners; editor doesn't permit creating a 1-tile lake so the smallest we get is this (. ground, C-oast, ~ water):
         [.][.][.][.][.][.]
         [.][C][C][C][C][.]
@@ -392,7 +425,8 @@ This file is licensed under public domain/Unlicense.
         [uint8] type
         [uint8] power_rating    #only if type == 0xFF
       #if META_OBJECT_QUEST_GUARD     parse_od_quest_guard.c
-        [uint8] quest_type (0 none, 1 level, 2 primary skills, 3 defeat hero, 4 defeat monster, 5 artifacts, 6 creatures, 7 resources, 8 be hero, 9 be player)
+      #or, unknown when introduced exactly, assuming HotA*: if class 212 and subclass 1000
+        [uint8] quest_type (0 none, 1 level, 2 primary skills, 3 defeat hero, 4 defeat monster, 5 artifacts, 6 creatures, 7 resources, 8 be hero, 9 be player; unknown when introduced exactly, assuming HotA*: 10 be hero class or after date)
         [...] quest info      parse_od_ext_quest.c
           [uint32] level (1-based) #if level
             h3mlib erroneously names this "experience"
@@ -415,6 +449,13 @@ This file is licensed under public domain/Unlicense.
             [uint8] count
             N identical structures, one per artifact, N = count
               [uint16] type (index in ARTRAITS.TXT)
+          [...] hota quests #if 10
+            [uint32] subtype (0 be hero class, 1 after date)
+            [...] be hero class quest   #if subtype = 0
+              [uint32] count (expect 20)
+              [...] required hero classes (bitfield, length = ceil(count / 8))
+                knight cleric ranger druid alchemist wizard demoniac heretic deathKnight necromancer overlord warlock barbarian battleMage beastmaster witch planeswalker elementalist captain navigator
+            [uint32] after date (0-based)   #if subtype = 1
           [...] deadline info #only if quest_type <> 0
             [uint32] deadline (0-based, 0 = stop passing on Day 1, i.e. will never allow anybody; 0xFFFFFFFF if none; h3mlib mistakenly reads this even if quest_type is 0)
               h3mlib erroneously reads this always, even if quest_type is 0
@@ -483,6 +524,7 @@ This file is licensed under public domain/Unlicense.
         [uint8] applies_to_computer
         [uint8] remove event after first visit
         4 bytes, unknown (should be 0s)
+        [uint8] applies_to_human    #if HotAv3
       #if META_OBJECT_GRAIL    parse_od.c
         [uint32] allowable_radius (editor limits to 0-127)
       #if META_OBJECT_DWELLING, META_OBJECT_DWELLING_ABSOD, META_OBJECT_LIGHTHOUSE, META_OBJECT_RESOURCE_GENERATOR, META_OBJECT_SHIPYARD
@@ -491,7 +533,7 @@ This file is licensed under public domain/Unlicense.
         [uint32] potential (bitfield: LSB wood that is forced off by editor, then mercury, ore, sulfur, crystal, gems, MSB gold; editor doesn't allow empty list)
           h3mlib erroneously reads META_OBJECT_ABANDONED_MINE_ABSOD as META_OBJECT_RESOURCE_GENERATOR, with owner instead of potential
       #if META_OBJECT_GENERIC_BOAT or META_OBJECT_GENERIC_PASSABLE_TERRAIN or META_OBJECT_GENERIC_PASSABLE_TERRAIN_SOD or META_OBJECT_GENERIC_IMPASSABLE_TERRAIN or META_OBJECT_GENERIC_IMPASSABLE_TERRAIN_ABSOD or META_OBJECT_GENERIC_VISITABLE or META_OBJECT_GENERIC_VISITABLE_ABSOD or META_OBJECT_GENERIC_TREASURE or META_OBJECT_MONOLITH_TWO_WAY or META_OBJECT_SUBTERRANEAN_GATE
-        no additional info for such objects
+        no additional info for such objects (16 24 25 84 85 are different for HotA, see below)
       #if META_OBJECT_TOWN or META_OBJECT_TOWN_ABSOD    parse_od_town.c
         [uint32] absod_id   #only AB/SoD
         [uint8] owner (0xFF none)
@@ -559,6 +601,7 @@ This file is licensed under public domain/Unlicense.
         9 bytes, each bit = must have spell (index in SPTRAITS.TXT)   #only AB/SoD
         9 bytes, each bit = may *not* have spell (index in SPTRAITS.TXT)
           h3mlib erroneously names this as may-have, not may-not
+        [uint8] allow spell research (bool)   #if HotA*
         [uint32] event_count
         N identical structures, one per event, N = event_count
           [uint32] name_size
@@ -575,7 +618,7 @@ This file is licensed under public domain/Unlicense.
           6 bytes, each bit = building (as in buildings above, unupgraded included)
           N uint16, one per each extra creature growth (dwelling level), N = 7
           4 bytes, unknown
-        [uint8] alignment (always 0xFF for regular town; for random town with checked "Same as Owner or Random" is 0xFF, else is 0-7 - "Same as Player N"; controlled by editor's Town Properties | General | "Alignment" list) #only SoD
+        [uint8] alignment (always 0xFF for regular town; for random town with checked "Same as Owner or Random" is 0xFF, else is 0-7 - "Same as Player N"; controlled by editor's Town Properties | General | "Alignment" list; unknown when introduced exactly, assuming HotA*: 8-15 - "Different from Player N") #only SoD
         3 bytes, unknown (should be 0s)
       #if META_OBJECT_RANDOM_DWELLING_ABSOD or META_OBJECT_RANDOM_DWELLING_PRESET_ALIGNMENT_ABSOD or META_OBJECT_RANDOM_DWELLING_PRESET_LEVEL_ABSOD
           parse_od_random_dwelling.c
@@ -662,6 +705,13 @@ This file is licensed under public domain/Unlicense.
         [uint8] never_flees
         [uint8] does_not_grow
         2 bytes, unknown (should be 0s)
+        [...] hota monster info   #if HotAv3
+            H3MObjects.cpp - MapMonster::readBinary()
+          [uint32] exact aggression (or 0xFFFFFFFF)
+          [uint8] join only for money (bool)
+          [uint32] join percentage
+          [uint32] upgraded stack (or 0xFFFFFFFF)
+          [uint32] split stack (or 0xFFFFFFFF)
       #if META_OBJECT_ARTIFACT or META_OBJECT_ARTIFACT_AB or META_OBJECT_ARTIFACT_SOD    parse_od_artifact.c
         [uint8] has_guardians
         [...] guardians as in META_OBJECT_PANDORAS_BOX #only if has_guardians <> 0
@@ -677,7 +727,12 @@ This file is licensed under public domain/Unlicense.
       #if META_OBJECT_WITCH_HUT    parse_od.c
         4 bytes, each bit = skill potentiability (order in SSTRAITS.TXT; editor doesn't allow empty list)   #only AB/SoD
           in RoE, this is hardcoded to all but Leadership/Necromancy enabled, which default to off in AB+ but may be changed
-      #if META_OBJECT_SEERS_HUT    parse_od_seers_hut.c
+      #if META_OBJECT_SEERS_HUT    #if HotAv3
+        [uint32] one-time quest count
+        [...] not tested but likely N identical structures of non-HotA META_OBJECT_SEERS_HUT below, one per quest
+        [uint32] recurring quest count
+        [...] as above
+      #if META_OBJECT_SEERS_HUT    parse_od_seers_hut.c   #if not HotAv3
         [uint8] artifact_type (0xFF none)  #only RoE
         [...] contents of META_OBJECT_QUEST_GUARD  #only AB/SoD
         [uint8] reward_type (0 none, 1 experience, 2 spell points, 3 morale, 4 luck, 5 resource, 6 primary skill, 7 secondary skill, 8 artifact, 9 spell, 10 creature)
@@ -711,6 +766,13 @@ This file is licensed under public domain/Unlicense.
         [uint8] reward_type (0xFF random, 0 primary skill, 1 secondary skill, 2 spell)
         [uint8] reward_value (always 0 if type is random; 0 boost attack/1 defense/2 spell power/3 knowledge; index in SSTRAITS.TXT; index in SPTRAITS.TXT)
         6 bytes, unknown
+      #if creature bank (classes: 16 24 25 84 85) and HotAv3
+          H3MObjects.cpp - MapObjectCreatureBank::readBinary()
+        [uint32] content (or 0xFFFFFFFF)
+        [uint8] upgraded (0/1 if bool, 0xFF if unset)
+        [uint32] artifacts_count
+        N identical structures, one per artifact, N = artifacts_count
+          [uint32] type (index in ARTRAITS.TXT)
 [...] global events       parse_event.c, h3m_event.h, h3m_event_body.h
   [uint32] count
   N identical structures, one per event, N = count

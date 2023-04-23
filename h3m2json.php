@@ -106,7 +106,8 @@ class Hash implements \ArrayAccess, \Countable {
 class Context {
   // Version number of the common "JSON" format produced by this script.
   // Stored in the "_version" field of the root object.
-  const VERSION = 1;
+  // Version 1 didn't have support for HotA and used null $details for banks.
+  const VERSION = 2;
 
   // Possible values for $partial.
   const HEADER = 0;
@@ -299,6 +300,17 @@ class Context {
     return array_search($format, H3M::$formats) <=
       ($this->isUnknown() ? $this->h3m->format
         : array_search($this->h3m->format, H3M::$formats));
+  }
+
+  // Returns true if the input H3M's format is HotA (any version).
+  function isHotA() {
+    return !strncmp($this->h3m->format, 'HotA', 4);
+  }
+
+  // Returns true if the input H3M's format is HotA3 and the major sub-format
+  // ($format1) is 3+.
+  function isHotAv3() {
+    return $this->is('HotA3') and $this->h3m->format1 >= 3;
   }
 
   // Returns index in H3M->$object by an object's .h3m ID number ($key is int)
@@ -707,6 +719,7 @@ class PhpStream extends Stream {
 // properties because json_encode() ignores them by default while serialize()
 // doesn't. Don't store complex objects like Context either. Only implement
 // parsing/writing logic here.
+#[\AllowDynamicProperties]
 abstract class Structure implements \JsonSerializable {
   // Configuration of factory() candidates. See that method for details.
   //
@@ -752,6 +765,11 @@ abstract class Structure implements \JsonSerializable {
 
   // See $metaEpoch for the description.
   protected $_metaEpoch;
+
+  // Returns the number of bytes that the given number of $bits will fit in.
+  static function bitfieldLength($bits) {
+    return ceil($bits / 8);
+  }
 
   #[\ReturnTypeWillChange]
   function jsonSerialize() {
@@ -1183,10 +1201,11 @@ abstract class Structure implements \JsonSerializable {
       array $detailsProps = [], $detailsClass = null) {
     if (isset($this->object)) {
       $obj = $cx->h3m->objects[$this->object];
+      $class = $obj->details ? get_class($obj->details) : 'null';
 
-      if ($detailsClass and get_class($obj->details) !== $detailsClass) {
+      if ($detailsClass and $class !== $detailsClass) {
         $cx->warning('%s->$object (%s) must reference a %s',
-          get_class($this), get_class($obj->details), $detailsClass);
+          get_class($this), $class, $detailsClass);
       }
 
       foreach (array_merge($objectProps, $detailsProps) as $i => $prop) {
@@ -1231,13 +1250,17 @@ abstract class Structure implements \JsonSerializable {
     ]);
   }
 
-  // Conditionally instantiates a sub-Structure stored in $this->$prop.
-  // $factory is a key in Structure::$factories; factory() calls 'if' callable
-  // for every member (giving it $options) and creates 'class' if it returns
-  // truthyness, setting $_type and calling recordMeta() on the new instance.
+  // Conditionally instantiates a sub-Structure stored in $this->$prop. $factory
+  // is a key in Structure::$factories; factory() calls 'if' callable for every
+  // member (giving it $options and $cx) and, if it returns truthyness, creates
+  // an object of class 'class' (calling if defined, giving it $cx and the
+  // member itself) or first in 'classes' (if not defined), setting $_type and
+  // calling recordMeta() on the new instance.
   //
   // It's an exception if $this->$prop is not null.
   // It's a warning if multiple or no 'if' returned truthyness.
+  // 'if' may not have side effects (e.g. reading $cx->stream), unlike 'class'.
+  // factory() doesn't mutate $object unless a callable does so.
   function factory(Context $cx, $prop, $factory, $options) {
     is_array($options) and $options = (object) $options;
 
@@ -1246,20 +1269,22 @@ abstract class Structure implements \JsonSerializable {
     }
 
     foreach (self::$factories[$factory] as $name => $info) {
-      if (call_user_func($info['if'], $options)) {
+      if (call_user_func($info['if'], $options, $cx)) {
         if ($this->$prop) {
           $cx->warning('multiple matching candidates of factory %s: %s (used), %s (ignored), ...; %s',
             $factory, $this->$prop->_type, $name, json_encode($options));
           break;
         }
 
-        $this->$prop = new $info['class'];
+        $class = isset($info['class'])
+          ? call_user_func($info['class'], $cx, $info) : $info['classes'][0];
+        $this->$prop = new $class;
         $this->$prop->_type = $name;
         $offset = $cx->stream->offset();
         $this->$prop->readUncompressedH3M($cx, ['options' => $options]);
 
         $this->recordMeta($cx, $prop, [
-          'class' => $info['class'],
+          'class' => $class,
           'offset' => $offset,
           'length' => $cx->stream->offset() - $offset,
         ]);
@@ -1273,7 +1298,7 @@ abstract class Structure implements \JsonSerializable {
   }
 
   // If $this->$prop is set, writes it to $cx (emitting a warning if it isn't an
-  // instance of any 'class' in $factory).
+  // instance of any 'classes' in $factory).
   //
   // If $this->$prop is unset, throws if $unset is null or writes $unset string
   // in its place.
@@ -1283,18 +1308,19 @@ abstract class Structure implements \JsonSerializable {
 
     if ($obj) {
       if (isset($obj->_type)) {
-        $class = isset(self::$factories[$factory][$obj->_type]['class'])
-                     ? self::$factories[$factory][$obj->_type]['class'] : null;
-        if (get_class($obj) !== $class) {
-          $cx->warning("%s->%s (%s) has \$_type of %s (factory %s) whose 'class' is different (%s)",
-            get_class($this), $prop, get_class($obj), $obj->_type, $factory, $class);
+        $classes = isset(self::$factories[$factory][$obj->_type]['classes'])
+                       ? self::$factories[$factory][$obj->_type]['classes'] : [];
+        if (!in_array(get_class($obj), $classes)) {
+          $cx->warning("%s->%s (%s) isn't included in \$_type %s's (factory %s) 'classes' (%s)",
+            get_class($this), $prop, get_class($obj), $obj->_type, $factory,
+            join(', ', $classes));
         }
       }
 
       $found = false;
 
       foreach (self::$factories[$factory] as $name => $info) {
-        if (get_class($obj) === $info['class']) {
+        if (in_array(get_class($obj), $info['classes'])) {
           $found = true;
           // Set $_type in case this Structure is going to be serialized after
           // building H3M.
@@ -1351,7 +1377,6 @@ abstract class StructureRW extends Structure {
 
 // Root object representing a H3M map, with all possible extensions ($formats).
 class H3M extends Structure {
-  const HERO_COUNT = 156;   // HOTRAITS.txt
   const PADDING = 124;
 
   // Magic numbers of all H3M formats supported by this script.
@@ -1363,14 +1388,18 @@ class H3M extends Structure {
     0x1C => 'SoD',
     // Modifications.
     //0x1D => 'CHR',    // XXX=I
+    0x1E => 'HotA1',
+    0x1F => 'HotA2',
+    0x20 => 'HotA3',
     //0x33 => 'WoG',    // XXX=I
-    // XXX=I HotA?
+    //0xF0 => 'VCMI',   // XXX=I
   ];
 
   static $difficultys = ['easy', 'normal', 'hard', 'expert', 'impossible'];
   static $playerss = ['red', 'blue', 'tan', 'green', 'orange', 'purple',
                        'teal', 'pink'];
 
+  // HotA: 180 (huge), 216 (extra huge), 252 (giant).
   static $sizeTexts = [36 => 'small', 72 => 'medium', 108 => 'large',
                        144 => 'extraLarge'];
 
@@ -1378,6 +1407,9 @@ class H3M extends Structure {
   public $_version; // int
 
   public $format; // str if known, else int; on read, null (-ap) indicates totally bad input file; on write, null = SoD
+  public $format1; // int if HotA, else null; major sub-format number; typically 1 or 3
+  public $format2; // int if HotA, else null; typically 0
+  public $format3; // int if isHotAv3(), else null; typically 12
   public $isPlayable; // bool; on write, null = true
   public $size; // int
   public $sizeText; // str if known, else null
@@ -1391,6 +1423,8 @@ class H3M extends Structure {
   public $lossCondition; // LossCondition, null for normal
   public $startingHeroes; // array of enabled HOTRAITS.TXT index; on write, null = all enabled
   public $placeholderHeroes = []; // array of HOTRAITS.TXT index
+  public $specialWeeks; // bool if HotA, else null
+  public $roundLimit; // int if HotA and is set, else null
   public $unavailableArtifacts = []; // array of enabled ARTRAITS.TXT index
   public $unavailableSpells = []; // array of enabled SPTRAITS.TXT index
   public $unavailableSkills = []; // array of enabled SSTRAITS.TXT index
@@ -1402,7 +1436,14 @@ class H3M extends Structure {
   public $events = []; // array of Event
 
   protected function readH3M(Context $cx, array $options) {
-    $this->unpack($cx, 'V format/b isPlayable/V size/b twoLevels');
+    $this->unpack($cx, 'V format');
+
+    if ($cx->isHotA()) {
+      $this->unpack($cx, 'V format1/v format2');
+      $cx->isHotAv3() and $this->unpack($cx, 'V format3');
+    }
+
+    $this->unpack($cx, 'b isPlayable/V size/b twoLevels');
     $this->readString($cx, 'name');
     $this->readString($cx, 'description');
     $this->unpack($cx, 'C difficulty');
@@ -1450,7 +1491,19 @@ class H3M extends Structure {
       }
     }
 
-    $this->unpack($cx, 'Bk'.($cx->isOrUp('AB') ? 20 : 16).' startingHeroes');
+    $unpackHeroCount = function ($name) use ($cx) {
+      list($count) = $this->unpack($cx, "V $name", false);
+      $expected = $this->heroCount($cx);
+      if ($count !== $expected) {
+        $cx->warning('$%s: expected %d, got %d', $name, $expected, $count);
+      }
+      return $count;
+    };
+
+    $startingHeroCount = $cx->isHotA()
+      ? $unpackHeroCount('startingHeroCount') : $this->heroCount($cx);
+
+    $this->unpack($cx, 'Bk'.static::bitfieldLength($startingHeroCount).' startingHeroes');
     if ($this->startingHeroes === []) {
       $cx->warning('$%s: none enabled', 'startingHeroes');
     }
@@ -1475,8 +1528,27 @@ class H3M extends Structure {
 
     $this->unpack($cx, 'z 31');
 
+    if ($cx->isHotA()) {
+      $this->unpack($cx, 'b specialWeeks/z 3');   // b+z3 = uint32
+      list($unknown) = $this->unpack($cx, 'v unknown/z 4', false);
+      if ($unknown !== 16) {
+        $cx->warning('$%s: expected 16, got %d', 'unknown', $unknown);
+      }
+      $cx->isHotAv3() and $this->unpack($cx, 'V roundLimit');
+      $this->roundLimit === 0xFFFFFFFF and $this->roundLimit = null;
+
+      list($artCount) = $this->unpack($cx, 'V unavailableArtifactCount', false);
+      $expected = $this->artifactCount($cx);
+      if ($artCount !== $expected) {
+        $cx->warning('$%s: expected %d, got %d', 'unavailableArtifactCount',
+          $expected, $artCount);
+      }
+    } else {
+      $artCount = $this->artifactCount($cx);
+    }
+
     if ($cx->isOrUp('AB')) {
-      $this->unpack($cx, 'Bk'.($cx->isOrUp('SoD') ? 18 : 17).' unavailableArtifacts');
+      $this->unpack($cx, 'Bk'.static::bitfieldLength($artCount).' unavailableArtifacts');
     }
 
     if ($cx->isOrUp('SoD')) {
@@ -1491,7 +1563,14 @@ class H3M extends Structure {
     $this->heroes = new Hash;
 
     if ($cx->isOrUp('SoD')) {
-      foreach (range(0, static::HERO_COUNT - 1) as $type) {
+      $count = $cx->isHotA() ? $unpackHeroCount('heroCount') : $this->heroCount($cx);
+
+      if ($count !== $startingHeroCount) {
+        $cx->warning('$heroCount (%d) mismatches $startingHeroCount (%d)',
+          $heroCount, $startingHeroCount);
+      }
+
+      foreach (range(0, $count - 1) as $type) {
         if ($this->unpack($cx, 'b hero', false)[0]) {
           ($hero = $this->heroes[$type] = new Hero)->readUncompressedH3M($cx);
 
@@ -1579,9 +1658,33 @@ class H3M extends Structure {
     }
   }
 
+  protected function heroCount(Context $cx) {
+    if ($cx->is('HotA3')) {
+      return $cx->isHotAv3() ? 179 : 178;
+    } else {
+      return $cx->isOrUp('AB') ? 156 : 128;
+    }
+  }
+
+  protected function artifactCount(Context $cx) {
+    if ($cx->is('HotA3')) {
+      return $cx->isHotAv3() ? 165 : 163;
+    } else {
+      return $cx->isOrUp('SoD') ? 141 : $cx->isOrUp('AB') + 128;
+    }
+  }
+
   protected function writeH3M(Context $cx, array $options) {
-    $this->pack($cx, 'V format/b isPlayable/V size/b twoLevels', [
+    $this->pack($cx, 'V format', [
       'format' => ['value' => isset($this->format) ? $this->format : 'SoD'],
+    ]);
+
+    if ($cx->isHotA()) {
+      $this->pack($cx, 'V format1/v format2');
+      $cx->isHotAv3() and $this->pack($cx, 'V format3');
+    }
+
+    $this->pack($cx, 'b isPlayable/V size/b twoLevels', [
       'isPlayable' => ['value' => isset($this->isPlayable) ? $this->isPlayable : true],
     ]);
 
@@ -1656,10 +1759,14 @@ class H3M extends Structure {
       }
     }
 
+    if ($cx->isHotA()) {
+      $this->pack($cx, 'V startingHeroCount', $this->heroCount($cx));
+    }
+
     if ($this->startingHeroes === []) {
       $cx->warning('$%s: none enabled', 'startingHeroes');
     }
-    $len = $cx->isOrUp('AB') ? 20 : 16;
+    $len = static::bitfieldLength($this->heroCount($cx));
     $sh = isset($this->startingHeroes) ? $this->startingHeroes
       : array_fill(0, $len * 8, true);
     $this->pack($cx, "Bk$len startingHeroes", ['startingHeroes' => ['value' => $sh]]);
@@ -1677,7 +1784,7 @@ class H3M extends Structure {
       $customHeroes = [];
       $count = 0;
 
-      foreach (range(0, static::HERO_COUNT - 1) as $type) {
+      foreach (range(0, $this->heroCount($cx) - 1) as $type) {
         $hero = $customHeroes[] = isset($this->heroes[$type])
           ? $this->heroes[$type] : new Hero;
         if (isset($hero->type) and $hero->type !== $type) {
@@ -1707,8 +1814,20 @@ class H3M extends Structure {
 
     $this->pack($cx, 'z 31');
 
+    if ($cx->isHotA()) {
+      $this->pack($cx, 'b specialWeeks/z 3/v unknown/z 4', [
+        'unknown' => ['value' => 16],
+      ]);
+
+      if ($cx->isHotAv3()) {
+        $this->pack($cx, 'V roundLimit', $this->packDefault($cx, 'roundLimit', 0xFFFFFFFF));
+      }
+
+      $this->pack($cx, 'V unavailableArtifactCount', $this->artifactCount($cx));
+    }
+
     if ($cx->isOrUp('AB')) {
-      $this->pack($cx, 'Bk'.($cx->isOrUp('SoD') ? 18 : 17).' unavailableArtifacts');
+      $this->pack($cx, 'Bk'.static::bitfieldLength($this->artifactCount($cx)).' unavailableArtifacts');
     } elseif (array_filter($this->unavailableArtifacts)) {
       $cx->warning('$%s: supported in AB+', 'unavailableArtifacts');
     }
@@ -1728,6 +1847,10 @@ class H3M extends Structure {
 
     foreach ($this->rumors as $rumor) {
       $rumor->writeUncompressedH3M($cx);
+    }
+
+    if ($cx->isHotA()) {
+      $this->pack($cx, 'V heroCount', $this->heroCount($cx));
     }
 
     if ($cx->isOrUp('SoD')) {
@@ -1846,6 +1969,7 @@ class H3M extends Structure {
 class Player extends Structure {
   static $behaviors = ['random', 'warrior', 'builder', 'explorer'];
 
+  // HotA: 9 => cove.
   static $townss = ['castle', 'rampart', 'tower', 'inferno', 'necropolis',
                     'dungeon', 'stronghold', 'fortress', 'conflux'];
 
@@ -1998,7 +2122,8 @@ class StartingTown extends Structure {
     if ($cx->is('RoE') and isset($this->object)) {
       if (isset($cx->objectIndex["hero.$this->x.$this->y.$this->z"])) {
         // The editor doesn't allow such combination.
-        $cx->warning('Generate Hero is forced on in RoE but Main Town (%d;%d;%d) already has a visiting hero', $this->x, $this->y, $this->z);
+        $cx->warning('Generate Hero is forced on in RoE but Main Town (%d;%d;%d) already has a visiting hero',
+          $this->x, $this->y, $this->z);
       } else {
         $this->createHero = true;
       }
@@ -2125,7 +2250,7 @@ class VictoryCondition_AcquireArtifact extends VictoryCondition {
 }
 Structure::$factories['victory']['artifact'] = [
   'if' => function (object $options) { return $options->type === VictoryCondition_AcquireArtifact::TYPE; },
-  'class' => VictoryCondition_AcquireArtifact::class,
+  'classes' => [VictoryCondition_AcquireArtifact::class],
 ];
 
 class VictoryCondition_AccumulateCreatures extends VictoryCondition {
@@ -2148,7 +2273,7 @@ class VictoryCondition_AccumulateCreatures extends VictoryCondition {
 }
 Structure::$factories['victory']['creatures'] = [
   'if' => function (object $options) { return $options->type === VictoryCondition_AccumulateCreatures::TYPE; },
-  'class' => VictoryCondition_AccumulateCreatures::class,
+  'classes' => [VictoryCondition_AccumulateCreatures::class],
 ];
 
 class VictoryCondition_AccumulateResources extends VictoryCondition {
@@ -2172,7 +2297,7 @@ class VictoryCondition_AccumulateResources extends VictoryCondition {
 }
 Structure::$factories['victory']['resources'] = [
   'if' => function (object $options) { return $options->type === VictoryCondition_AccumulateResources::TYPE; },
-  'class' => VictoryCondition_AccumulateResources::class,
+  'classes' => [VictoryCondition_AccumulateResources::class],
 ];
 
 // If the using class defines writeH3M() or has abstract parent::writeH3M(), it
@@ -2281,7 +2406,7 @@ class VictoryCondition_BuildGrail extends PositionalVictoryCondition {
 }
 Structure::$factories['victory']['grail'] = [
   'if' => function (object $options) { return $options->type === VictoryCondition_BuildGrail::TYPE; },
-  'class' => VictoryCondition_BuildGrail::class,
+  'classes' => [VictoryCondition_BuildGrail::class],
 ];
 
 class VictoryCondition_DefeatHero extends PositionalVictoryCondition {
@@ -2299,7 +2424,7 @@ class VictoryCondition_DefeatHero extends PositionalVictoryCondition {
 }
 Structure::$factories['victory']['defeatHero'] = [
   'if' => function (object $options) { return $options->type === VictoryCondition_DefeatHero::TYPE; },
-  'class' => VictoryCondition_DefeatHero::class,
+  'classes' => [VictoryCondition_DefeatHero::class],
 ];
 
 class VictoryCondition_CaptureTown extends PositionalVictoryCondition {
@@ -2307,14 +2432,24 @@ class VictoryCondition_CaptureTown extends PositionalVictoryCondition {
 }
 Structure::$factories['victory']['captureTown'] = [
   'if' => function (object $options) { return $options->type === VictoryCondition_CaptureTown::TYPE; },
-  'class' => VictoryCondition_CaptureTown::class,
+  'classes' => [VictoryCondition_CaptureTown::class],
 ];
 
 class VictoryCondition_DefeatMonster extends PositionalVictoryCondition {
   const TYPE = 7;
 
-  protected $adjustX = 0;   // [ ][X] - monster's actionable spot
   protected $objectGroup = 'monster';
+
+  protected function setAdjustX(Context $cx) {
+    // [ ][ ] - monster's actionable spot, except in HotA: [ ][ ][ ]
+    // [ ][X]                                              [ ][X][ ]
+    $this->adjustX = $cx->isHotA();
+  }
+
+  protected function readH3M(Context $cx, array $options) {
+    $this->setAdjustX($cx);
+    return parent::readH3M($cx, $options);
+  }
 
   protected function checkFlags(Context $cx) {
     parent::checkFlags($cx);
@@ -2322,10 +2457,15 @@ class VictoryCondition_DefeatMonster extends PositionalVictoryCondition {
       $cx->warning('potentially unsupported victory condition flag');
     }
   }
+
+  protected function writeH3M(Context $cx, array $options) {
+    $this->setAdjustX($cx);
+    return parent::writeH3M($cx, $options);
+  }
 }
 Structure::$factories['victory']['defeatMonster'] = [
   'if' => function (object $options) { return $options->type === VictoryCondition_DefeatMonster::TYPE; },
-  'class' => VictoryCondition_DefeatMonster::class,
+  'classes' => [VictoryCondition_DefeatMonster::class],
 ];
 
 class VictoryCondition_UpgradeTown extends VictoryCondition_BuildGrail {
@@ -2358,7 +2498,7 @@ class VictoryCondition_UpgradeTown extends VictoryCondition_BuildGrail {
 }
 Structure::$factories['victory']['upgradeTown'] = [
   'if' => function (object $options) { return $options->type === VictoryCondition_UpgradeTown::TYPE; },
-  'class' => VictoryCondition_UpgradeTown::class,
+  'classes' => [VictoryCondition_UpgradeTown::class],
 ];
 
 class VictoryCondition_FlagDwellings extends VictoryCondition {
@@ -2366,7 +2506,7 @@ class VictoryCondition_FlagDwellings extends VictoryCondition {
 }
 Structure::$factories['victory']['dwellings'] = [
   'if' => function (object $options) { return $options->type === VictoryCondition_FlagDwellings::TYPE; },
-  'class' => VictoryCondition_FlagDwellings::class,
+  'classes' => [VictoryCondition_FlagDwellings::class],
 ];
 
 class VictoryCondition_FlagMines extends VictoryCondition {
@@ -2374,7 +2514,7 @@ class VictoryCondition_FlagMines extends VictoryCondition {
 }
 Structure::$factories['victory']['mines'] = [
   'if' => function (object $options) { return $options->type === VictoryCondition_FlagMines::TYPE; },
-  'class' => VictoryCondition_FlagMines::class,
+  'classes' => [VictoryCondition_FlagMines::class],
 ];
 
 class VictoryCondition_TransportArtifact extends PositionalVictoryCondition {
@@ -2401,7 +2541,58 @@ class VictoryCondition_TransportArtifact extends PositionalVictoryCondition {
 }
 Structure::$factories['victory']['transport'] = [
   'if' => function (object $options) { return $options->type === VictoryCondition_TransportArtifact::TYPE; },
-  'class' => VictoryCondition_TransportArtifact::class,
+  'classes' => [VictoryCondition_TransportArtifact::class],
+];
+
+class VictoryCondition_DefeatMonsters extends VictoryCondition {
+  const TYPE = 11;
+
+  protected function checkFlags(Context $cx) {
+    parent::checkFlags($cx);
+    if ($this->applyToComputer) {
+      $cx->warning('potentially unsupported victory condition flag');
+    }
+  }
+}
+Structure::$factories['victory']['defeatMonsters'] = [
+  'if' => function (object $options, Context $cx) {
+    return $options->type === VictoryCondition_DefeatMonsters::TYPE and
+           $cx->isHotA();
+  },
+  'classes' => [VictoryCondition_DefeatMonsters::class],
+];
+
+class VictoryCondition_TimeExpires extends VictoryCondition {
+  const TYPE = 12;
+
+  public $days; // int 1-based; win when day $days + 1 dawns
+
+  protected function readH3M(Context $cx, array $options) {
+    parent::readH3M($cx, $options);
+    $this->unpack($cx, 'V days');
+  }
+
+  protected function checkFlags(Context $cx) {
+    parent::checkFlags($cx);
+    if ($this->applyToComputer) {
+      $cx->warning('potentially unsupported victory condition flag');
+    }
+    if ($this->days < 1) {
+      $cx->warning('non-positive VictoryCondition_TimeExpires->$days');
+    }
+  }
+
+  protected function writeH3M(Context $cx, array $options) {
+    parent::writeH3M($cx, $options);
+    $this->pack($cx, 'V days');
+  }
+}
+Structure::$factories['victory']['time'] = [
+  'if' => function (object $options, Context $cx) {
+    return $options->type === VictoryCondition_TimeExpires::TYPE and
+           $cx->isHotA();
+  },
+  'classes' => [VictoryCondition_TimeExpires::class],
 ];
 
 abstract class LossCondition extends StructureRW {
@@ -2417,7 +2608,7 @@ class LossCondition_LoseTown extends PositionalLossCondition {
 }
 Structure::$factories['loss']['town'] = [
   'if' => function (object $options) { return $options->type === LossCondition_LoseTown::TYPE; },
-  'class' => LossCondition_LoseTown::class,
+  'classes' => [LossCondition_LoseTown::class],
 ];
 
 class LossCondition_LoseHero extends PositionalLossCondition {
@@ -2429,13 +2620,13 @@ class LossCondition_LoseHero extends PositionalLossCondition {
 
 Structure::$factories['loss']['hero'] = [
   'if' => function (object $options) { return $options->type === LossCondition_LoseHero::TYPE; },
-  'class' => LossCondition_LoseHero::class,
+  'classes' => [LossCondition_LoseHero::class],
 ];
 
 class LossCondition_TimeExpires extends LossCondition {
   const TYPE = 2;
 
-  public $days; // int 1-based; lose when 1-based day $days + 1 dawns
+  public $days; // int 1-based; lose when day $days + 1 dawns
 
   protected function readH3M(Context $cx, array $options) {
     parent::readH3M($cx, $options);
@@ -2456,7 +2647,7 @@ class LossCondition_TimeExpires extends LossCondition {
 }
 Structure::$factories['loss']['time'] = [
   'if' => function (object $options) { return $options->type === LossCondition_TimeExpires::TYPE; },
-  'class' => LossCondition_TimeExpires::class,
+  'classes' => [LossCondition_TimeExpires::class],
 ];
 
 class Rumor extends Structure {
@@ -2735,12 +2926,14 @@ class Artifact extends Structure {
 }
 
 class Tile extends Structure {
+  // HotA: 10 => highland, 11 => wasteland.
   static $terrains = ['dirt', 'desert', 'grass', 'snow', 'swamp', 'rough',
                       'subterranean', 'lava', 'water', 'rock'];
   static $rivers = [null, 'clear', 'icy', 'muddy', 'lava'];
   static $roads = [null, 'dirt', 'gravel', 'cobblestone'];
   static $flagss = ['terrainFlipX', 'terrainFlipY', 'riverFlipX',
-                    'riverFlipY', 'roadFlipX', 'roadFlipY', 'coast'];
+                    'riverFlipY', 'roadFlipX', 'roadFlipY', 'coast',
+                    'favorableWinds'];
 
   public $terrain; // str if known, else int
   public $terrainSubclass; // int
@@ -2932,7 +3125,7 @@ class MapObject extends Structure {
     $this->unpack($cx, 'z 5');
     $this->factory($cx, 'details', 'objectDetails', $this);
 
-    if (get_class($this->details) === ObjectDetails_None::class) {
+    if (get_class($this->details ?: $this) === ObjectDetails_None::class) {
       $this->details = null;
     }
 
@@ -2985,7 +3178,7 @@ class ObjectDetails_HeroPlaceholder extends ObjectDetails {
 }
 Structure::$factories['objectDetails']['heroPlaceholder'] = [
   'if' => function (object $options) { return $options->class === 214; },
-  'class' => ObjectDetails_HeroPlaceholder::class,
+  'classes' => [ObjectDetails_HeroPlaceholder::class],
 ];
 
 // Also acts as a parent class for ObjectDetails_SeerHut.
@@ -2995,6 +3188,13 @@ class ObjectDetails_QuestGuard extends ObjectDetails {
   public $firstMessage; // str, null if no $quest
   public $unmetMessage; // str, null if no $quest
   public $metMessage; // str, null if no $quest
+
+  static function factoryIf(object $options, Context $cx) {
+    return $options->class === 215 or
+           // Quest Gate.
+           ($options->class === 212 and $options->subclass === 1000 and
+            $cx->isHotA());
+  }
 
   protected function readH3M(Context $cx, array $options) {
     parent::readH3M($cx, $options);
@@ -3028,8 +3228,8 @@ class ObjectDetails_QuestGuard extends ObjectDetails {
   }
 }
 Structure::$factories['objectDetails']['questGuard'] = [
-  'if' => function (object $options) { return $options->class === 215; },
-  'class' => ObjectDetails_QuestGuard::class,
+  'if' => [ObjectDetails_QuestGuard::class, 'factoryIf'],
+  'classes' => [ObjectDetails_QuestGuard::class],
 ];
 
 abstract class Quest extends StructureRW {
@@ -3060,7 +3260,7 @@ class Quest_Level extends Quest {
 }
 Structure::$factories['quest']['experience'] = [
   'if' => function (object $options) { return $options->type === Quest_Level::TYPE; },
-  'class' => Quest_Level::class,
+  'classes' => [Quest_Level::class],
 ];
 
 class Quest_PrimarySkills extends Quest {
@@ -3083,7 +3283,7 @@ class Quest_PrimarySkills extends Quest {
 }
 Structure::$factories['quest']['primarySkills'] = [
   'if' => function (object $options) { return $options->type === Quest_PrimarySkills::TYPE; },
-  'class' => Quest_PrimarySkills::class,
+  'classes' => [Quest_PrimarySkills::class],
 ];
 
 abstract class DefeatQuest extends Quest {
@@ -3109,14 +3309,14 @@ class Quest_DefeatHero extends DefeatQuest {
   protected function writeH3M(Context $cx, array $options) {
     parent::writeH3M($cx, $options);
     if (isset($this->object) and
-        get_class($cx->h3m->objects[$this->object]->details) !== ObjectDetails_Hero::class) {
+        get_class($cx->h3m->objects[$this->object]->details ?: $this) !== ObjectDetails_Hero::class) {
       $cx->warning('$%s: must be a hero', 'object');
     }
   }
 }
 Structure::$factories['quest']['defeatHero'] = [
   'if' => function (object $options) { return $options->type === Quest_DefeatHero::TYPE; },
-  'class' => Quest_DefeatHero::class,
+  'classes' => [Quest_DefeatHero::class],
 ];
 
 class Quest_DefeatMonster extends DefeatQuest {
@@ -3125,14 +3325,14 @@ class Quest_DefeatMonster extends DefeatQuest {
   protected function writeH3M(Context $cx, array $options) {
     parent::writeH3M($cx, $options);
     if (isset($this->object) and
-        get_class($cx->h3m->objects[$this->object]->details) !== ObjectDetails_Monster::class) {
+        get_class($cx->h3m->objects[$this->object]->details ?: $this) !== ObjectDetails_Monster::class) {
       $cx->warning('$%s: must be a monster', 'object');
     }
   }
 }
 Structure::$factories['quest']['defeatMonster'] = [
   'if' => function (object $options) { return $options->type === Quest_DefeatMonster::TYPE; },
-  'class' => Quest_DefeatMonster::class,
+  'classes' => [Quest_DefeatMonster::class],
 ];
 
 class Quest_Resources extends Quest {
@@ -3152,7 +3352,7 @@ class Quest_Resources extends Quest {
 }
 Structure::$factories['quest']['resources'] = [
   'if' => function (object $options) { return $options->type === Quest_Resources::TYPE; },
-  'class' => Quest_Resources::class,
+  'classes' => [Quest_Resources::class],
 ];
 
 class Resources extends Structure implements \Countable {
@@ -3210,7 +3410,7 @@ class Quest_BeHero extends Quest {
 }
 Structure::$factories['quest']['beHero'] = [
   'if' => function (object $options) { return $options->type === Quest_BeHero::TYPE; },
-  'class' => Quest_BeHero::class,
+  'classes' => [Quest_BeHero::class],
 ];
 
 class Quest_BePlayer extends Quest {
@@ -3232,7 +3432,7 @@ class Quest_BePlayer extends Quest {
 }
 Structure::$factories['quest']['bePlayer'] = [
   'if' => function (object $options) { return $options->type === Quest_BePlayer::TYPE; },
-  'class' => Quest_BePlayer::class,
+  'classes' => [Quest_BePlayer::class],
 ];
 
 class Quest_Creatures extends Quest {
@@ -3263,7 +3463,7 @@ class Quest_Creatures extends Quest {
 }
 Structure::$factories['quest']['creatures'] = [
   'if' => function (object $options) { return $options->type === Quest_Creatures::TYPE; },
-  'class' => Quest_Creatures::class,
+  'classes' => [Quest_Creatures::class],
 ];
 
 class Creature extends Structure {
@@ -3360,7 +3560,69 @@ class Quest_Artifacts extends Quest {
 }
 Structure::$factories['quest']['artifacts'] = [
   'if' => function (object $options) { return $options->type === Quest_Artifacts::TYPE; },
-  'class' => Quest_Artifacts::class,
+  'classes' => [Quest_Artifacts::class],
+];
+
+abstract class HotaQuest extends Quest {
+  const TYPE = 10;
+  //const SUBTYPE = 0;
+
+  protected function writeH3M(Context $cx, array $options) {
+    parent::writeH3M($cx, $options);
+    $this->pack($cx, 'V subType', static::SUBTYPE);
+  }
+}
+
+class Quest_BeHeroClass extends HotaQuest {
+  const SUBTYPE = 0;
+
+  static $classess = ['knight', 'cleric', 'ranger', 'druid', 'alchemist',
+                      'wizard', 'demoniac', 'heretic', 'deathKnight',
+                      'necromancer', 'overlord', 'warlock', 'barbarian',
+                      'battleMage', 'beastmaster', 'witch', 'planeswalker',
+                      'elementalist', 'captain', 'navigator'];
+
+  public $classes; // array of enabled 'knight'
+
+  protected function readH3M(Context $cx, array $options) {
+    parent::readH3M($cx, $options);
+    list($count) = $this->unpack($cx, 'V count', false);
+    if ($count !== count(static::$classess)) {
+      $cx->warning('$%s: expected %d, got %d',
+        'count', count(static::$classess), $count);
+    }
+    $this->unpack('Bk'.static::bitfieldLength($count).' classes');
+  }
+
+  protected function writeH3M(Context $cx, array $options) {
+    parent::writeH3M($cx, $options);
+    $this->pack($cx, 'V count', $count = count(static::$classess));
+    $this->pack($cx, 'Bk'.static::bitfieldLength($count).' classes');
+  }
+}
+class Quest_AfterDate extends HotaQuest {
+  const SUBTYPE = 1;
+
+  public $date; // int 0-based (0 = month 1, week 1, day 1)
+
+  protected function readH3M(Context $cx, array $options) {
+    parent::readH3M($cx, $options);
+    $this->unpack($cx, 'V date');
+  }
+
+  protected function writeH3M(Context $cx, array $options) {
+    parent::writeH3M($cx, $options);
+    $this->pack($cx, 'V date');
+  }
+}
+Structure::$factories['quest']['hota'] = [
+  'if' => function (object $options, Context $cx) {
+    return $options->type === Quest_BeHeroClass::TYPE and $cx->isHotA();
+  },
+  'classes' => [Quest_BeHeroClass::class, Quest_AfterDate::class],
+  'class' => function (Context $cx, array $entry) {
+    return $entry['classes'][$cx->unpack('V type')['type']['value']];
+  },
 ];
 
 // Also acts as a parent class for ObjectDetails_Event.
@@ -3458,7 +3720,7 @@ class ObjectDetails_PandoraBox extends ObjectDetails {
 }
 Structure::$factories['objectDetails']['pandoraBox'] = [
   'if' => function (object $options) { return $options->class === 6; },
-  'class' => ObjectDetails_PandoraBox::class,
+  'classes' => [ObjectDetails_PandoraBox::class],
 ];
 
 class Guarded extends Structure {
@@ -3493,11 +3755,13 @@ class ObjectDetails_Event extends ObjectDetails_PandoraBox {
 
   public $players; // array of enabled 'red'; on write, null = all
   public $applyToComputer; // bool
+  public $applyToHuman; // bool if HotA, else null
   public $removeAfterVisit; // bool
 
   protected function readH3M(Context $cx, array $options) {
     parent::readH3M($cx, $options);
     $this->unpack($cx, 'Bk1 players/b applyToComputer/b removeAfterVisit/z 4');
+    $cx->isHotAv3() and $this->unpack($cx, 'b applyToHuman');
     $this->checkFlags($cx);
   }
 
@@ -3512,11 +3776,12 @@ class ObjectDetails_Event extends ObjectDetails_PandoraBox {
     $this->checkFlags($cx);
     $this->pack($cx, 'Bk1 players/b applyToComputer/b removeAfterVisit/z 4',
       ['players' => ['value' => isset($this->players) ? $this->players : H3M::$playerss]]);
+    $cx->isHotAv3() and $this->pack('b applyToHuman');
   }
 }
 Structure::$factories['objectDetails']['event'] = [
   'if' => function (object $options) { return $options->class === 26; },
-  'class' => ObjectDetails_Event::class,
+  'classes' => [ObjectDetails_Event::class],
 ];
 
 class ObjectDetails_Sign extends ObjectDetails {
@@ -3538,7 +3803,7 @@ Structure::$factories['objectDetails']['sign'] = [
   'if' => function (object $options) {
     return in_array($options->class, [59, 91]);
   },
-  'class' => ObjectDetails_Sign::class,
+  'classes' => [ObjectDetails_Sign::class],
 ];
 
 class ObjectDetails_Garrison extends ObjectDetails {
@@ -3572,7 +3837,7 @@ Structure::$factories['objectDetails']['garrison'] = [
   'if' => function (object $options) {
     return in_array($options->class, [33, 219]);
   },
-  'class' => ObjectDetails_Garrison::class,
+  'classes' => [ObjectDetails_Garrison::class],
 ];
 
 class ObjectDetails_Grail extends ObjectDetails {
@@ -3590,7 +3855,7 @@ class ObjectDetails_Grail extends ObjectDetails {
 }
 Structure::$factories['objectDetails']['grail'] = [
   'if' => function (object $options) { return $options->class === 36; },
-  'class' => ObjectDetails_Grail::class,
+  'classes' => [ObjectDetails_Grail::class],
 ];
 
 class ObjectDetails_Ownable extends ObjectDetails {
@@ -3630,7 +3895,7 @@ Structure::$factories['objectDetails']['ownable'] = [
            in_array($options->class, [17, 18, 19, 20, // META_OBJECT_DWELLING
                                       42, 87]);
   },
-  'class' => ObjectDetails_Ownable::class,
+  'classes' => [ObjectDetails_Ownable::class],
 ];
 
 class ObjectDetails_AbandonedMine extends ObjectDetails {
@@ -3667,35 +3932,32 @@ Structure::$factories['objectDetails']['abandonedMine'] = [
     return $options->class === 220 or
            ($options->class === 53 and $options->subclass === 7);
   },
-  'class' => ObjectDetails_AbandonedMine::class,
+  'classes' => [ObjectDetails_AbandonedMine::class],
 ];
 
 class ObjectDetails_None extends ObjectDetails {
   // Read by factory(). Never written.
 }
 Structure::$factories['objectDetails']['none'] = [
-  'if' => function (object $options) {
-    return false !== strpos(
-      ' 8'.
-      ' 124 21 46 125 176 175'.
-      ' 222 224 225 226 227 228 229 231 223 230 139 141 142 144 145 146'.
-      ' 0 40 114 115 116 117 118 119 120 121 122 123 126 127 128 129 130 131 132'.
-      ' 133 134 135 136 137 138 143 147 148 149 150 151 152 153 154 155 156 157'.
-      ' 158 159 160 161'.
-      ' 165 166 167 168 169 170 171 172 173 174 177 178 179 180 181 182 183 184'.
-      ' 185 186 187 188 189 190 191 192 193 194 195 196 197 198 199 200 201 202'.
-      ' 203 204 205 206 207 208 209 210 211'.
-      ' 2 3 4 7 13 11 14 15 16 22 23 24 25 27 28 30 31 32 35 37 38 39 41'.
-      ' 47 48 49 51 52 55 56 57 58 60 61 64 9 10 78 80 84 85 92 94 95 96'.
-      ' 97 99 100 102 104 105 106 107 108 109 110 111 112 50 1'.
-      ' 221 63 212 213 43 44'.
-      ' 12 29 82 86 101'.
-      ' 45'.
-      ' 103 ',
-      " $options->class "
-    );
+  'if' => function (object $options, Context $cx) {
+    static $classes = [
+      8, 124, 21, 46, 125, 176, 175, 222, 224, 225, 226, 227, 228, 229, 231,
+      223, 230, 139, 141, 142, 144, 145, 146, 0, 40, 114, 115, 116, 117, 118,
+      119, 120, 121, 122, 123, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135,
+      136, 137, 138, 143, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157,
+      158, 159, 160, 161, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 177,
+      178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192,
+      193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207,
+      208, 209, 210, 211, 2, 3, 4, 7, 13, 11, 14, 15, 22, 23, 27, 28, 30, 31,
+      32, 35, 37, 38, 39, 41, 47, 48, 49, 51, 52, 55, 56, 57, 58, 60, 61, 64, 9,
+      10, 78, 80, 92, 94, 95, 96, 97, 99, 100, 102, 104, 105, 106, 107, 108,
+      109, 110, 111, 112, 50, 1, 221, 63, 212, 213, 43, 44, 12, 29, 82, 86, 101,
+      45, 103,
+    ];
+    return in_array($options->class, $classes) and
+           !ObjectDetails_QuestGuard::factoryIf($options, $cx);
   },
-  'class' => ObjectDetails_None::class,
+  'classes' => [ObjectDetails_None::class],
 ];
 
 // Applies to random and regular towns alike.
@@ -3751,6 +4013,7 @@ class ObjectDetails_Town extends ObjectDetails {
   ];
 
   static $disabledBuildingss = 'HeroWO\\H3M\\ObjectDetails_Town::$builts';
+  // HotA: 8 => different from Player 1's alignment, ..., 15 => ...from Player 8's.
   static $randomTypes = 'HeroWO\\H3M\\H3M::$playerss';
 
   public $objectID; // int
@@ -3762,6 +4025,7 @@ class ObjectDetails_Town extends ObjectDetails {
   public $disabledBuildings = []; // array (in $built format), empty if $built is bool
   public $existingSpells = []; // array of enabled SPTRAITS.TXT index
   public $impossibleSpells; // array of enabled SPTRAITS.TXT index; on write, null = []
+  public $spellResearch; // bool if HotA, else null
   public $events = []; // array of TownEvent
   public $randomType; // null if regular town, null if random and, after game starts, must equal $owner or be randomized if unowned, str if random and must match that player's alignment, else int if unknown player
 
@@ -3795,6 +4059,7 @@ class ObjectDetails_Town extends ObjectDetails {
     }
 
     $this->unpack($cx, 'Bk9 impossibleSpells');
+    $cx->isHotA() and $this->unpack($cx, 'b spellResearch');
 
     list($count) = $this->unpack($cx, 'V eventCount', false);
     while ($count--) {
@@ -3845,6 +4110,7 @@ class ObjectDetails_Town extends ObjectDetails {
     }
 
     $this->pack($cx, 'Bk9? impossibleSpells');
+    $cx->isHotA() and $this->pack($cx, 'b spellResearch');
 
     $this->pack($cx, 'V eventCount', count($this->events));
     foreach ($this->events as $event) {
@@ -3872,7 +4138,7 @@ Structure::$factories['objectDetails']['town'] = [
   'if' => function (object $options) {
     return in_array($options->class, [98, 77]);
   },
-  'class' => ObjectDetails_Town::class,
+  'classes' => [ObjectDetails_Town::class],
 ];
 
 class Event extends Structure {
@@ -4015,7 +4281,7 @@ class ObjectDetails_RandomDwelling extends ObjectDetails {
     if (in_array($class, [216, 217])) {
       $this->packReferencedObject($cx, [], ['objectID']);
       if (isset($this->object) and
-          get_class($cx->h3m->objects[$this->object]->details) !== ObjectDetails_Town::class) {
+          get_class($cx->h3m->objects[$this->object]->details ?: $this) !== ObjectDetails_Town::class) {
         $cx->warning('$%s: must be a town', 'object');
       }
       $this->pack($cx, 'V? objectID');
@@ -4048,7 +4314,7 @@ Structure::$factories['objectDetails']['randomDwelling'] = [
   'if' => function (object $options) {
     return in_array($options->class, [216, 218, 217]);
   },
-  'class' => ObjectDetails_RandomDwelling::class,
+  'classes' => [ObjectDetails_RandomDwelling::class],
 ];
 
 class ObjectDetails_Hero extends ObjectDetails {
@@ -4271,9 +4537,10 @@ Structure::$factories['objectDetails']['hero'] = [
   'if' => function (object $options) {
     return in_array($options->class, [34, 70, 62]);
   },
-  'class' => ObjectDetails_Hero::class,
+  'classes' => [ObjectDetails_Hero::class],
 ];
 
+// In HotA, monsters are not 2x2 but 3x2 with the actionable spot of $x - 1.
 class ObjectDetails_Monster extends ObjectDetails {
   static $dispositions = ['compliant', 'friendly', 'aggressive', 'hostile',
                           'savage'];
@@ -4287,6 +4554,11 @@ class ObjectDetails_Monster extends ObjectDetails {
   public $artifact; // ARTRAITS.TXT index, null
   public $canFlee; // bool; on write, null = true
   public $canGrow; // bool; on write, null = true
+  public $exactAggression; // int if HotA and is set, else null
+  public $joinOnlyForMoney; // bool if HotA, else null
+  public $joinPercentage; // int if HotA, else null
+  public $upgradedStack; // int if HotA and is set, else null
+  public $splitStack; // int if HotA and is set, else null
 
   // These are determined by MapObject->$class.
   public $creature; // CRTRAITS.txt index, null if random
@@ -4310,6 +4582,13 @@ class ObjectDetails_Monster extends ObjectDetails {
     $this->unpack($cx, 'b canFlee/b canGrow/z 2');
     $this->canFlee = !$this->canFlee;
     $this->canGrow = !$this->canGrow;
+
+    if ($cx->isHotAv3()) {
+      $this->unpack($cx, 'V exactAggression/b joinOnlyForMoney/V joinPercentage/V upgradedStack/V splitStack');
+      $this->exactAggression === 0xFFFFFFFF and $this->exactAggression = null;
+      $this->upgradedStack === 0xFFFFFFFF and $this->upgradedStack = null;
+      $this->splitStack === 0xFFFFFFFF and $this->splitStack = null;
+    }
 
     if ($options['options']->class === 54) {
       $this->creature = $options['options']->subclass;
@@ -4343,6 +4622,14 @@ class ObjectDetails_Monster extends ObjectDetails {
     $this->pack($cx, 'b canGrow', !(isset($this->canGrow) ? $this->canGrow : true));
     $this->pack($cx, 'z 2');
 
+    if ($cx->isHotAv3()) {
+      $this->pack($cx, 'V exactAggression/b joinOnlyForMoney/V joinPercentage/V upgradedStack/V splitStack', [
+        'exactAggression' => ['value' => $this->packDefault($cx, 'exactAggression', 0xFFFFFFFF)],
+        'upgradedStack' => ['value' => $this->packDefault($cx, 'upgradedStack', 0xFFFFFFFF)],
+        'splitStack' => ['value' => $this->packDefault($cx, 'splitStack', 0xFFFFFFFF)],
+      ]);
+    }
+
     if ($options['parent']->class <= 71 /*or 54*/ and isset($this->level)) {
       $cx->warning('$level: incompatible with %d', $options['parent']->class);
     }
@@ -4360,7 +4647,7 @@ Structure::$factories['objectDetails']['monster'] = [
   'if' => function (object $options) {
     return in_array($options->class, [54, 71, 72, 73, 74, 75, 162, 163, 164]);
   },
-  'class' => ObjectDetails_Monster::class,
+  'classes' => [ObjectDetails_Monster::class],
 ];
 
 abstract class GuardedObjectDetails extends ObjectDetails {
@@ -4412,7 +4699,7 @@ Structure::$factories['objectDetails']['artifact'] = [
   'if' => function (object $options) {
     return in_array($options->class, [5, 65, 66, 67, 68, 69]);
   },
-  'class' => ObjectDetails_Artifact::class,
+  'classes' => [ObjectDetails_Artifact::class],
 ];
 
 class ObjectDetails_Shrine extends ObjectDetails {
@@ -4439,7 +4726,7 @@ Structure::$factories['objectDetails']['shrine'] = [
   'if' => function (object $options) {
     return in_array($options->class, [88, 89, 90]);
   },
-  'class' => ObjectDetails_Shrine::class,
+  'classes' => [ObjectDetails_Shrine::class],
 ];
 
 // Message and guards: show message alone, with ok/cancel buttons, combat on ok.
@@ -4461,7 +4748,7 @@ class ObjectDetails_SpellScroll extends GuardedObjectDetails {
 }
 Structure::$factories['objectDetails']['scroll'] = [
   'if' => function (object $options) { return $options->class === 93; },
-  'class' => ObjectDetails_SpellScroll::class,
+  'classes' => [ObjectDetails_SpellScroll::class],
 ];
 
 // Message and guards: show message alone, with ok/cancel buttons, combat on ok.
@@ -4520,7 +4807,7 @@ Structure::$factories['objectDetails']['resource'] = [
   'if' => function (object $options) {
     return in_array($options->class, [79, 76]);
   },
-  'class' => ObjectDetails_Resource::class,
+  'classes' => [ObjectDetails_Resource::class],
 ];
 
 class ObjectDetails_WitchHut extends ObjectDetails {
@@ -4553,7 +4840,7 @@ class ObjectDetails_WitchHut extends ObjectDetails {
 }
 Structure::$factories['objectDetails']['witchHut'] = [
   'if' => function (object $options) { return $options->class === 113; },
-  'class' => ObjectDetails_WitchHut::class,
+  'classes' => [ObjectDetails_WitchHut::class],
 ];
 
 class ObjectDetails_SeerHut extends ObjectDetails_QuestGuard {
@@ -4602,9 +4889,41 @@ class ObjectDetails_SeerHut extends ObjectDetails_QuestGuard {
     $this->pack($cx, 'z 2');
   }
 }
+class ObjectDetails_SeerHutHotA extends ObjectDetails_SeerHut {
+  public $recurring; // bool if HotA, else null
+
+  protected function readH3M(Context $cx, array $options) {
+    list($count) = $this->unpack($cx, 'V questCount', false);
+    if ($count > 1) {
+      throw new \RuntimeException("HotA's SeerHut \$questCount of $count is unsupported.");
+    }
+
+    $this->recurring = !$count;
+    $this->recurring or parent::readH3M($cx, $options);
+
+    list($count) = $this->unpack($cx, 'V recurringQuestCount', false);
+    if ($count !== (int) $this->recurring) {
+      throw new \RuntimeException("HotA's SeerHut \$recurringQuestCount of $count is unsupported.");
+    }
+
+    $this->recurring and parent::readH3M($cx, $options);
+  }
+
+  protected function writeH3M(Context $cx, array $options) {
+    // Actually V but b+z allows pack() to warn on wrong type of $recurring.
+    $this->pack($cx, 'b questCount/z 3', !$this->recurring);
+    $this->recurring or parent::writeH3M($cx, $options);
+
+    $this->pack($cx, 'b recurringQuestCount/z 3', $this->recurring);
+    $this->recurring and parent::writeH3M($cx, $options);
+  }
+}
 Structure::$factories['objectDetails']['seerHut'] = [
   'if' => function (object $options) { return $options->class === 83; },
-  'class' => ObjectDetails_SeerHut::class,
+  'classes' => [ObjectDetails_SeerHut::class, ObjectDetails_SeerHutHotA::class],
+  'class' => function (Context $cx, array $entry) {
+    return $entry['classes'][$cx->isHotAv3()];
+  },
 ];
 
 abstract class Reward extends StructureRW {
@@ -4635,7 +4954,7 @@ class Reward_Experience extends Reward {
 }
 Structure::$factories['reward']['experience'] = [
   'if' => function (object $options) { return $options->type === Reward_Experience::TYPE; },
-  'class' => Reward_Experience::class,
+  'classes' => [Reward_Experience::class],
 ];
 
 class Reward_SpellPoints extends Reward {
@@ -4662,13 +4981,13 @@ class Reward_SpellPoints extends Reward {
 }
 Structure::$factories['reward']['spellPoints'] = [
   'if' => function (object $options) { return $options->type === Reward_SpellPoints::TYPE; },
-  'class' => Reward_SpellPoints::class,
+  'classes' => [Reward_SpellPoints::class],
 ];
 
 class Reward_Morale extends Reward {
   const TYPE = 3;
 
-  public $morale; // int 0..2 (+1)
+  public $morale; // int 1..3
 
   protected function readH3M(Context $cx, array $options) {
     parent::readH3M($cx, $options);
@@ -4677,7 +4996,7 @@ class Reward_Morale extends Reward {
 
   protected function checkFlags(Context $cx) {
     parent::checkFlags($cx);
-    if ($this->morale > 2) {
+    if (!$this->morale or $this->morale > 3) {
       $cx->warning('$%s: out of bounds', 'morale');
     }
   }
@@ -4689,13 +5008,13 @@ class Reward_Morale extends Reward {
 }
 Structure::$factories['reward']['morale'] = [
   'if' => function (object $options) { return $options->type === Reward_Morale::TYPE; },
-  'class' => Reward_Morale::class,
+  'classes' => [Reward_Morale::class],
 ];
 
 class Reward_Luck extends Reward {
   const TYPE = 4;
 
-  public $luck; // int 0..2 (+1)
+  public $luck; // int 1..3
 
   protected function readH3M(Context $cx, array $options) {
     parent::readH3M($cx, $options);
@@ -4704,7 +5023,7 @@ class Reward_Luck extends Reward {
 
   protected function checkFlags(Context $cx) {
     parent::checkFlags($cx);
-    if ($this->luck > 2) {
+    if (!$this->luck or $this->luck > 3) {
       $cx->warning('$%s: out of bounds', 'luck');
     }
   }
@@ -4716,7 +5035,7 @@ class Reward_Luck extends Reward {
 }
 Structure::$factories['reward']['luck'] = [
   'if' => function (object $options) { return $options->type === Reward_Luck::TYPE; },
-  'class' => Reward_Luck::class,
+  'classes' => [Reward_Luck::class],
 ];
 
 class Reward_Resource extends Reward {
@@ -4746,7 +5065,7 @@ class Reward_Resource extends Reward {
 }
 Structure::$factories['reward']['resource'] = [
   'if' => function (object $options) { return $options->type === Reward_Resource::TYPE; },
-  'class' => Reward_Resource::class,
+  'classes' => [Reward_Resource::class],
 ];
 
 class Reward_PrimarySkill extends Reward {
@@ -4776,7 +5095,7 @@ class Reward_PrimarySkill extends Reward {
 }
 Structure::$factories['reward']['primarySkill'] = [
   'if' => function (object $options) { return $options->type === Reward_PrimarySkill::TYPE; },
-  'class' => Reward_PrimarySkill::class,
+  'classes' => [Reward_PrimarySkill::class],
 ];
 
 class Reward_Skill extends Reward {
@@ -4796,7 +5115,7 @@ class Reward_Skill extends Reward {
 }
 Structure::$factories['reward']['skill'] = [
   'if' => function (object $options) { return $options->type === Reward_Skill::TYPE; },
-  'class' => Reward_Skill::class,
+  'classes' => [Reward_Skill::class],
 ];
 
 class Reward_Artifact extends Reward {
@@ -4820,7 +5139,7 @@ class Reward_Artifact extends Reward {
 }
 Structure::$factories['reward']['artifact'] = [
   'if' => function (object $options) { return $options->type === Reward_Artifact::TYPE; },
-  'class' => Reward_Artifact::class,
+  'classes' => [Reward_Artifact::class],
 ];
 
 class Reward_Spell extends Reward {
@@ -4845,7 +5164,7 @@ class Reward_Spell extends Reward {
 }
 Structure::$factories['reward']['spell'] = [
   'if' => function (object $options) { return $options->type === Reward_Spell::TYPE; },
-  'class' => Reward_Spell::class,
+  'classes' => [Reward_Spell::class],
 ];
 
 class Reward_Creature extends Reward {
@@ -4865,7 +5184,7 @@ class Reward_Creature extends Reward {
 }
 Structure::$factories['reward']['creature'] = [
   'if' => function (object $options) { return $options->type === Reward_Creature::TYPE; },
-  'class' => Reward_Creature::class,
+  'classes' => [Reward_Creature::class],
 ];
 
 class ObjectDetails_Scholar extends ObjectDetails {
@@ -4892,7 +5211,7 @@ class ObjectDetails_Scholar extends ObjectDetails {
 }
 Structure::$factories['objectDetails']['scholar'] = [
   'if' => function (object $options) { return $options->class === 81; },
-  'class' => ObjectDetails_Scholar::class,
+  'classes' => [ObjectDetails_Scholar::class],
 ];
 
 class Reward_ScholarPrimarySkill extends Reward {
@@ -4914,7 +5233,7 @@ class Reward_ScholarPrimarySkill extends Reward {
 }
 Structure::$factories['scholarReward']['primarySkill'] = [
   'if' => function (object $options) { return $options->type === Reward_ScholarPrimarySkill::TYPE; },
-  'class' => Reward_ScholarPrimarySkill::class,
+  'classes' => [Reward_ScholarPrimarySkill::class],
 ];
 
 class Reward_ScholarSkill extends Reward {
@@ -4934,12 +5253,71 @@ class Reward_ScholarSkill extends Reward {
 }
 Structure::$factories['scholarReward']['skill'] = [
   'if' => function (object $options) { return $options->type === Reward_ScholarSkill::TYPE; },
-  'class' => Reward_ScholarSkill::class,
+  'classes' => [Reward_ScholarSkill::class],
 ];
 
 Structure::$factories['scholarReward']['spell'] = [
   'if' => function (object $options) { return $options->type === 2; },
-  'class' => Reward_Spell::class,
+  'classes' => [Reward_Spell::class],
+];
+
+class ObjectDetails_Bank extends ObjectDetails {
+  public $content; // int if HotA and is set, else null
+  public $upgraded; // bool if HotA and is set, else null
+  public $artifacts; // array of Artifact if HotA, else null
+
+  protected function readH3M(Context $cx, array $options) {
+    parent::readH3M($cx, $options);
+
+    if ($cx->isHotAv3()) {
+      $this->unpack($cx, 'V content');
+      $this->content === 0xFFFFFFFF and $this->content = null;
+      list($upgraded) = $this->unpack($cx, 'C upgraded', false);
+
+      if ($upgraded === 0xFF) {
+        $this->upgraded = null;
+      } else {
+        if ($upgraded > 1) {
+          $this->warning('$%s: bool value 0x%02X instead of 00/01/FF',
+            'upgraded', $upgraded);
+        }
+        $this->upgraded = (bool) $upgraded;
+      }
+
+      list($count) = $this->unpack($cx, 'V artifactCount', false);
+      while ($count--) {
+        ($this->artifacts[] = new Artifact)->readUncompressedH3M($cx, [
+          'size' => 'V',
+        ]);
+      }
+    }
+  }
+
+  protected function writeH3M(Context $cx, array $options) {
+    parent::writeH3M($cx, $options);
+
+    if ($cx->isHotAv3()) {
+      $this->pack($cx, 'V content', $this->packDefault($cx, 'content', 0xFFFFFFFF));
+
+      $upgraded = $this->packDefault($cx, 'upgraded', 0xFF);
+      if (!is_bool($upgraded) and $upgraded !== 0xFF) {
+        $this->warning('$%s: bool value %s instead of bool/null',
+          'upgraded', gettype($upgraded));
+      }
+      $this->pack($cx, 'C upgraded', (int) $upgraded);
+
+      $this->pack($cx, 'V artifactCount', count($this->artifacts ?: []));
+      foreach ($this->artifacts ?: [] as $art) {
+        $art->writeUncompressedH3M($cx, ['size' => 'V']);
+      }
+    }
+  }
+}
+Structure::$factories['objectDetails']['bank'] = [
+  'if' => function (object $options) {
+    return in_array($options->class, [16, 24, 25, 84, 85]);
+  },
+  'classes' => [ObjectDetails_Bank::class],
 ];
 
 // Returns a human-readable representation of a binary $s'ting. $offset is start
@@ -5400,7 +5778,7 @@ HELP;
   }
 
   function run() {
-    if (!file_exists($this->inputPath ?? '')) {
+    if (!file_exists((string) $this->inputPath)) {
       fwrite($this->outputStream, $this->helpText());
       return 1;
     }
@@ -5712,8 +6090,10 @@ HELP;
           $sizeText = 'non-std';
         }
 
-        fprintf($infoStream, '  [%s] %dx%dx%d (%s) %s P%d/T%d +%s -%s O%d E%d "%s" "%s"%s',
-          $h3m->format, $h3m->size, $h3m->size, $h3m->twoLevels + 1, $sizeText,
+        fprintf($infoStream, '  [%s%s] %dx%dx%d (%s) %s P%d/T%d +%s -%s O%d E%d "%s" "%s"%s',
+          $h3m->format,
+          rtrim("v$h3m->format1.$h3m->format2.$h3m->format3", 'v.'),
+          $h3m->size, $h3m->size, $h3m->twoLevels + 1, $sizeText,
           $h3m->difficulty,
           count($h3m->players ?: []),
           count(array_unique(array_column($h3m->players ?: [], 'team'))),
@@ -5724,7 +6104,7 @@ HELP;
           count($h3m->objects ?: []),
           count($h3m->events ?: []),
           $h3m->name,
-          strlen($h3m->description ?? '') > 18
+          strlen((string) $h3m->description) > 18
             ? substr($h3m->description, 0, 15).'...' : $h3m->description,
           PHP_EOL);
 

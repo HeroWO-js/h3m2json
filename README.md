@@ -13,6 +13,7 @@ https://herowo.game
 - Performs excessive error-checking (lots of potential warnings).
 - Provides ample debug information (byte-by-byte stream analysis, relation to parsed structures).
 - Built around an extensible architecture with current support of all official HoMM 3 versions (RoE, AB, SoD).
+- ...and HotA, but keeps raw values for non-official content (e.g. numeric identifiers for HotA-specific terrain).
 - Written in an easy-to-follow manner. No C, please!
 - Can be called from CLI or `include`'d into your own script.
 
