@@ -42,6 +42,7 @@ class StreamError extends \Exception {}
 // echo json_encode(publicProperties($hash));
 // echo json_encode($hash);
 //   //=> both: {"0": "first", "5": "second"}
+#[\AllowDynamicProperties]
 class Hash implements \ArrayAccess, \Countable {
   protected $_nextKey = 0;
 
@@ -1265,7 +1266,7 @@ abstract class Structure implements \JsonSerializable {
     is_array($options) and $options = (object) $options;
 
     if ($this->$prop) {
-      throw new \InvalidArgumentException(get_class($this)."->factory() called on a non-null ${$prop} (".get_class($this->$prop).").");
+      throw new \InvalidArgumentException(get_class($this)."->factory() called on a non-null \$$prop (".get_class($this->$prop).").");
     }
 
     foreach (self::$factories[$factory] as $name => $info) {
@@ -2855,8 +2856,8 @@ class Artifact extends Structure {
 
     foreach (static::$slots as $slot) {
       switch ($slot) {
-        case 'warMachine4':
-          if (isset($options['catapult']) and !$cx->isOrUp($options['catapult'])) {
+        case 'misc5':
+          if (isset($options['misc5']) and !$cx->isOrUp($options['misc5'])) {
             break;
           }
         default:
@@ -2889,11 +2890,11 @@ class Artifact extends Structure {
         $art = $default;
       }
       switch ($slot) {
-        case 'warMachine4':
-          if (isset($options['catapult']) and !$cx->isOrUp($options['catapult'])) {
+        case 'misc5':
+          if (isset($options['misc5']) and !$cx->isOrUp($options['misc5'])) {
             if ($art !== $default) {
               $cx->warning('Artifact in %s: supported in %s+',
-                $slot, $options['catapult']);
+                $slot, $options['misc5']);
             }
             break;
           }
@@ -4390,7 +4391,7 @@ class ObjectDetails_Hero extends ObjectDetails {
       $this->artifacts = Artifact::readAllFromUncompressedH3M($cx, [
         'size' => $cx->isOrUp('AB') ? 'v' : 'C',
         'default' => $cx->isOrUp('AB') ? 0xFFFF : 0xFF,
-        'catapult' => 'SoD',
+        'misc5' => 'SoD',
       ]);
     }
 
@@ -4490,7 +4491,7 @@ class ObjectDetails_Hero extends ObjectDetails {
       Artifact::writeAllToUncompressedH3M($cx, $this->artifacts, [
         'size' => $cx->isOrUp('AB') ? 'v' : 'C',
         'default' => $cx->isOrUp('AB') ? 0xFFFF : 0xFF,
-        'catapult' => 'SoD',
+        'misc5' => 'SoD',
       ]);
     }
 
@@ -6083,7 +6084,7 @@ HELP;
       }
 
       if ($h3m) {
-        if (preg_match_all('/^.|[A-Z]/', $h3m->sizeText, $match)) {
+        if (preg_match_all('/^.|[A-Z]/', (string) $h3m->sizeText, $match)) {
           $sizeText = strtoupper(join($match[0]));
           $sizeText === 'EL' and $sizeText = 'XL';
         } else {

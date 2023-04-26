@@ -670,9 +670,9 @@ This file is licensed under public domain/Unlicense.
           [uint8/16] device1 (war machine)
           [uint8/16] device2
           [uint8/16] device3
-          [uint8/16] device4 (see above for this slot)  #only SoD
+          [uint8/16] device4 (see above for this slot)
           [uint8/16] spellbook
-          [uint8/16] misc5
+          [uint8/16] misc5    #only SoD
           [uint16] backpack count
           N identical structures, one per artifact, N = backpack count
             [uint8/16] type
