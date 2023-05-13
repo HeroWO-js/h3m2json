@@ -1508,6 +1508,7 @@ class H3M extends Structure {
     if ($this->startingHeroes === []) {
       $cx->warning('$%s: none enabled', 'startingHeroes');
     }
+    $cx->is('RoE') and array_push($this->startingHeroes, ...range(128, 143));
 
     list($count) = $cx->isOrUp('AB')
       ? $this->unpack($cx, 'V placeholderHeroCount', false) : [0];
@@ -1764,6 +1765,9 @@ class H3M extends Structure {
       $this->pack($cx, 'V startingHeroCount', $this->heroCount($cx));
     }
 
+    if ($cx->is('RoE')) {
+      $this->startingHeroes = array_diff($this->startingHeroes, range(128, 143));
+    }
     if ($this->startingHeroes === []) {
       $cx->warning('$%s: none enabled', 'startingHeroes');
     }

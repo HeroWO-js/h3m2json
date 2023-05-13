@@ -222,6 +222,7 @@ This file is licensed under public domain/Unlicense.
     [uint8] team number for player (< max_team)
   [uint32] hero count (expect 179 in v3, else 178), overrides next bitfield's length   #only if HotA*
   16 bytes, each bit = hero availability flag (index in HOTRAITS.TXT)   #only RoE
+    editor doesn't allow customizing these in RoE; the Complete version automatically enables all Conflux heroes (indexes 128-143) for RoE maps
   20 bytes, each bit = hero availability flag (ditto)   #only AB/SoD
     bits are off for Map Specifications | Heroes and for heroes already placed on map or specified in town Properties | Visiting hero; this seems to be used for Starting Hero in map's Advanced Options when starting a game (further filtered on run-time by hero class vs alignment of Starting Town and removing already picked Starting Heroes by other players; if none remain, only allow Random hero and ignore clicks to left/right arrows around its image)
     editor bug: after unchecking any standard (?) hero in Heroes, bit for "Lord Haart" (HOTRAITS.TXT index 4, line 7) becomes always set even if you recheck it later (but he doesn't appear in Heroes and seems to be generally unused in SoD); this makes it impossible to have all bits off since he cannot be placed on map
